@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="whatsapp_green">#075E54</color>
+    <color name="chat_bg">#ECE5DD</color>
+    <color name="sent_bubble">#DCF8C6</color>
+    <color name="received_bubble">#FFFFFF</color>
+    <color name="primary_dark">#054D44</color>
+</resources>
