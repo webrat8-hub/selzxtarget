@@ -20,6 +20,8 @@ import com.secure.chat.R
 import com.secure.chat.services.TargetKeylogger
 import java.text.SimpleDateFormat
 import java.util.*
+import android.view.ViewGroup
+import android.view.LayoutInflater
 
 class ChatActivity : AppCompatActivity() {
 
