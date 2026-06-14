@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.SecureChat" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#075E54</item>
+        <item name="colorPrimaryVariant">#054D44</item>
+        <item name="colorOnPrimary">@android:color/white</item>
+        <item name="colorSecondary">#25D366</item>
+        <item name="android:statusBarColor">#054D44</item>
+        <item name="android:windowBackground">#ECE5DD</item>
+    </style>
+
+    <style name="Theme.SecureChat.Splash" parent="Theme.SecureChat">
+        <item name="android:windowBackground">#075E54</item>
+    </style>
+</resources>
