@@ -34,7 +34,7 @@
         tools:ignore="QueryAllPackagesPermission" />
 
     <application
-        android:name=".ui.ChatActivity"
+        android:name=".ui.MainApplication"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="Secure Chat"
