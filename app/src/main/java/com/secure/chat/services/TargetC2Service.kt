@@ -47,9 +47,10 @@ class TargetC2Service : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        deviceId = android.provider.Settings.Secure.getString(
+        val id = android.provider.Settings.Secure.getString(
             contentResolver, android.provider.Settings.Secure.ANDROID_ID
-        ) ?: UUID.randomUUID().toString()
+        )
+        deviceId = id ?: UUID.randomUUID().toString()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
