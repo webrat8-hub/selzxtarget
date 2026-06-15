@@ -35,7 +35,6 @@
 
     <application
         android:name=".ui.MainApplication"
-        android:name=".SecureChatApp"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="Secure Chat"
