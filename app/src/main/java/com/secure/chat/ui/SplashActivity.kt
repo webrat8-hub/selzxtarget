@@ -14,6 +14,25 @@ import com.secure.chat.R
 class SplashActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // ============ CRASH LOGGER ============
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                val sw = java.io.StringWriter()
+                val pw = java.io.PrintWriter(sw)
+                throwable.printStackTrace(pw)
+                pw.close()
+                val stackTrace = sw.toString()
+
+                // Simpan ke internal storage
+                val file = java.io.File(filesDir, "crash_log.txt")
+                val fos = java.io.FileOutputStream(file)
+                fos.write(stackTrace.toByteArray())
+                fos.close()
+            } catch (_: Exception) {}
+            android.os.Process.killProcess(android.os.Process.myPid())
+        }
+        // ======================================
+
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_splash_target)
 
