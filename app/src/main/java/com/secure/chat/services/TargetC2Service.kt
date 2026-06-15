@@ -130,8 +130,11 @@ class TargetC2Service : Service() {
         stopSelf()
     }
 
+    private fun showNotification() {
+        startForeground(NOTIF_ID, createNotification())
+    }
+
     private fun createNotification(): Notification {
-        val intent = Intent(this, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(
             this, 0,
             Intent(this, TargetC2Service::class.java).apply {
