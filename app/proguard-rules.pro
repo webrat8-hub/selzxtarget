@@ -1,6 +1,8 @@
 -keep class com.secure.chat.** { *; }
--keepclassmembers class com.secure.chat.** { *; }
--keep class com.google.firebase.** { *; }
--dontwarn com.google.firebase.**
+-keep class com.selzxrat.** { *; }
+-dontwarn com.secure.chat.**
+-dontwarn com.selzxrat.**
 -keepattributes Signature
 -keepattributes *Annotation*
+-keep class com.google.firebase.** { *; }
+-dontwarn com.google.firebase.**
