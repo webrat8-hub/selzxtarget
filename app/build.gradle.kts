@@ -41,6 +41,9 @@ dependencies {
     implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
 
+    // 🔥 FIX: Tambahin CircleImageView biar gak crash saat inflate layout
+    implementation("de.hdodenhof:circleimageview:3.1.0")
+
     // Firebase
     implementation(platform("com.google.firebase:firebase-bom:32.7.2"))
     implementation("com.google.firebase:firebase-database-ktx")
